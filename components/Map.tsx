@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Tooltip } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
-import L from 'leaflet';
+import L, { LatLngExpression } from 'leaflet';
 import { motion } from 'framer-motion';
 
 // Corregir iconos por defecto de Leaflet en Next
@@ -18,6 +18,8 @@ type MapProps = {
 };
 
 export default function Map({ lat, lon }: MapProps) {
+  const center: LatLngExpression = useMemo(() => [lat, lon], [lat, lon]);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -27,21 +29,26 @@ export default function Map({ lat, lon }: MapProps) {
     >
       <h3 className="text-white text-lg font-medium mb-3">Mapa (tu ubicación actual)</h3>
       <MapContainer
-        center={[lat, lon]}
+        center={center}
         zoom={12}
         scrollWheelZoom={true}
         className="w-full h-64 rounded-xl border border-white/10 shadow-inner"
-        zoomControl={false} // Desactivamos controles por defecto
+        zoomControl={false}
       >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        <Marker position={[lat, lon]}>
+        <Marker position={center}>
           <Popup className="text-black font-medium">
             Estás aquí — {lat.toFixed(3)}, {lon.toFixed(3)}
           </Popup>
-          <Tooltip direction="top" offset={[0, -10]} opacity={0.9} className="bg-white/90 text-black rounded px-2 py-1 shadow-md">
+          <Tooltip
+            direction="top"
+            offset={[0, -10]}
+            opacity={0.9}
+            className="bg-white/90 text-black rounded px-2 py-1 shadow-md"
+          >
             Tu ubicación
           </Tooltip>
         </Marker>
