@@ -29,7 +29,8 @@ export default function Map({ lat, lon }: MapProps) {
     >
       <h3 className="text-white text-lg font-medium mb-3">Mapa (tu ubicación actual)</h3>
       <MapContainer
-        center={center as LatLngTuple} // 👈 forzamos tipado para evitar error en build
+        // @ts-expect-error bug en los tipos de react-leaflet
+        center={center}
         zoom={12}
         scrollWheelZoom={true}
         className="w-full h-64 rounded-xl border border-white/10 shadow-inner"
