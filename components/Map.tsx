@@ -29,7 +29,6 @@ export default function Map({ lat, lon }: MapProps) {
     >
       <h3 className="text-white text-lg font-medium mb-3">Mapa (tu ubicación actual)</h3>
       <MapContainer
-        // @ts-expect-error bug en los tipos de react-leaflet
         center={center}
         zoom={12}
         scrollWheelZoom={true}

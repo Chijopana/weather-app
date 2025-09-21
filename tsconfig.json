@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "es2020",
+    "target": "ES2020",
     "lib": [
       "dom",
       "dom.iterable",
@@ -8,7 +8,7 @@
     ],
     "allowJs": false,
     "skipLibCheck": true,
-    "strict": false,
+    "strict": true,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
     "esModuleInterop": true,
@@ -17,10 +17,11 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "preserve",
+    "incremental": true,
     "types": [
-      "node"
-    ],
-    "incremental": true
+      "node",
+      "leaflet"
+    ]
   },
   "include": [
     "next-env.d.ts",
