@@ -2,13 +2,13 @@ import React, { useMemo } from 'react';
 import { weatherToBackground } from '../utils/weatherUtils';
 import { motion } from 'framer-motion';
 import Particles from 'react-tsparticles';
-import type { IOptions, MoveDirection } from 'tsparticles-engine'; // ✅ aquí
+import type { MoveDirection } from 'tsparticles-engine';
 
 export default function Background({ weatherMain }: { weatherMain?: string }) {
   const type = weatherToBackground(weatherMain);
   const base = 'fixed inset-0 -z-10 transition-all duration-1000';
 
-  const particlesOptions: IOptions = useMemo(() => ({
+  const particlesOptions = useMemo(() => ({
     background: { color: { value: 'transparent' } },
     fpsLimit: 60,
     particles: {
