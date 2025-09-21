@@ -2,24 +2,25 @@ import React, { useMemo } from 'react';
 import { weatherToBackground } from '../utils/weatherUtils';
 import { motion } from 'framer-motion';
 import Particles from 'react-tsparticles';
+import type { RecursivePartial, IOptions, MoveDirection } from 'tsparticles';
 
 export default function Background({ weatherMain }: { weatherMain?: string }) {
   const type = weatherToBackground(weatherMain);
   const base = 'fixed inset-0 -z-10 transition-all duration-1000';
 
-  const particlesOptions = useMemo(() => ({
+  const particlesOptions: RecursivePartial<IOptions> = useMemo(() => ({
     background: { color: { value: 'transparent' } },
     fpsLimit: 60,
     particles: {
       number: { value: type === 'storm' ? 80 : 50 },
       color: { value: '#ffffff' },
-      shape: { type: type === 'rain' || type === 'storm' ? 'line' : 'circle' },
+      shape: { type: (type === 'rain' || type === 'storm') ? 'line' : 'circle' },
       opacity: { value: 0.3 },
       size: { value: type === 'storm' ? 2 : 1.5 },
       move: {
         enable: true,
         speed: type === 'rain' ? 7 : type === 'storm' ? 10 : 1.5,
-        direction: 'bottom',
+        direction: 'bottom' as MoveDirection, // ✅ cast al tipo correcto
         straight: type === 'rain' || type === 'storm',
       },
     },
