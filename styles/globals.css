@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* pequeños ajustes para leaflet */
+.leaflet-container {
+  height: 300px;
+  width: 100%;
+}
+
+/* tipografías y suavizado */
+html, body, #__next {
+  height: 100%;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;  /* IE y Edge */
+  scrollbar-width: none;     /* Firefox */
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;             /* Chrome, Safari, Opera */
+}
