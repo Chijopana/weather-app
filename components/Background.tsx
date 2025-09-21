@@ -2,13 +2,13 @@ import React, { useMemo } from 'react';
 import { weatherToBackground } from '../utils/weatherUtils';
 import { motion } from 'framer-motion';
 import Particles from 'react-tsparticles';
-import type { RecursivePartial, IOptions, MoveDirection } from 'tsparticles';
+import type { IOptions, MoveDirection } from 'tsparticles-engine'; // ✅ aquí
 
 export default function Background({ weatherMain }: { weatherMain?: string }) {
   const type = weatherToBackground(weatherMain);
   const base = 'fixed inset-0 -z-10 transition-all duration-1000';
 
-  const particlesOptions: RecursivePartial<IOptions> = useMemo(() => ({
+  const particlesOptions: IOptions = useMemo(() => ({
     background: { color: { value: 'transparent' } },
     fpsLimit: 60,
     particles: {
@@ -20,7 +20,7 @@ export default function Background({ weatherMain }: { weatherMain?: string }) {
       move: {
         enable: true,
         speed: type === 'rain' ? 7 : type === 'storm' ? 10 : 1.5,
-        direction: 'bottom' as MoveDirection, // ✅ cast al tipo correcto
+        direction: 'bottom' as MoveDirection,
         straight: type === 'rain' || type === 'storm',
       },
     },
