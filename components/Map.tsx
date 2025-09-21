@@ -1,7 +1,7 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Tooltip } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
-import L, { LatLngExpression } from 'leaflet';
+import L, { LatLngTuple } from 'leaflet';
 import { motion } from 'framer-motion';
 
 // Corregir iconos por defecto de Leaflet en Next
@@ -18,7 +18,7 @@ type MapProps = {
 };
 
 export default function Map({ lat, lon }: MapProps) {
-  const center: LatLngExpression = useMemo(() => [lat, lon], [lat, lon]);
+  const center: LatLngTuple = [lat, lon];
 
   return (
     <motion.div
