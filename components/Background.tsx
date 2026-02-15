@@ -1,18 +1,31 @@
-import React, { useMemo } from "react";
+/**
+ * Background Component
+ * Renders dynamic background with weather-based animations
+ * Uses tsparticles for rain/storm effects
+ */
+
+import React, { useMemo, memo } from "react";
 import { weatherToBackground } from "../utils/weatherUtils";
 import { motion } from "framer-motion";
 import dynamic from "next/dynamic";
 import type { MoveDirection } from "tsparticles-engine";
 
-// Cargamos Particles solo en el cliente (evita errores SSR en Next.js)
+// Load Particles only on client (avoids SSR errors in Next.js)
 const Particles = dynamic(() => import("react-tsparticles"), { ssr: false });
 
-export default function Background({ weatherMain }: { weatherMain?: string }) {
+interface BackgroundProps {
+  weatherMain?: string;
+}
+
+/**
+ * Background component with dynamic weather-based styling
+ */
+const Background = memo(function Background({ weatherMain }: BackgroundProps) {
   const type = weatherToBackground(weatherMain);
 
   const base = "fixed inset-0 -z-10 transition-all duration-1000";
 
-  // Opciones para tsparticles
+  // Memoize particle options to prevent unnecessary re-renders
   const particlesOptions = useMemo(
     () => ({
       background: { color: { value: "transparent" } },
@@ -31,14 +44,17 @@ export default function Background({ weatherMain }: { weatherMain?: string }) {
         },
       },
       interactivity: {
-        events: { onHover: { enable: false }, onClick: { enable: false } },
+        events: {
+          onHover: { enable: false },
+          onClick: { enable: false },
+        },
       },
       detectRetina: true,
     }),
     [type]
   );
 
-  // Colores de fondo según clima
+  // Color gradients based on weather condition
   const gradients: Record<string, string> = {
     clear: "from-sky-400 via-sky-300 to-indigo-500",
     clouds: "from-gray-300 via-gray-400 to-gray-600",
@@ -49,7 +65,6 @@ export default function Background({ weatherMain }: { weatherMain?: string }) {
     default: "from-cyan-400 via-blue-400 to-indigo-600",
   };
 
-  // fallback si viene un tipo inesperado
   const gradientClass = gradients[type] || gradients.default;
 
   return (
@@ -60,10 +75,13 @@ export default function Background({ weatherMain }: { weatherMain?: string }) {
       animate={{ opacity: 1 }}
       transition={{ duration: 1.5 }}
       aria-hidden="true"
+      role="presentation"
     >
       {(type === "rain" || type === "storm") && (
         <Particles id="weather-particles" options={particlesOptions} />
       )}
     </motion.div>
   );
-}
+});
+
+export default Background;

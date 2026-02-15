@@ -1,109 +1,138 @@
-import React, { FC } from "react";
-import { formatTemp, formatHour, formatDay } from "../utils/weatherUtils";
+/**
+ * WeatherCard Component
+ * Displays weather information in card format
+ * Supports current, hourly, and daily weather display
+ */
+
+import React, { FC, memo, useMemo } from "react";
+import { formatTemp, formatHour, formatDay, getWeatherIcon } from "../utils/weatherUtils";
 import {
-  WiDaySunny,
-  WiCloud,
-  WiRain,
-  WiSnow,
-  WiThunderstorm,
-  WiFog,
   WiStrongWind,
   WiHumidity,
 } from "react-icons/wi";
 import { motion } from "framer-motion";
+import { CurrentWeather, HourlyWeather, DailyWeather, WeatherCardType } from "../types/weather";
 
-type Condition = {
-  text?: string;
+interface WeatherCardProps {
+  data?: CurrentWeather | HourlyWeather | DailyWeather;
+  type?: WeatherCardType;
+}
+
+/**
+ * Extracts weather condition from different data types
+ */
+const getConditionText = (
+  data: CurrentWeather | HourlyWeather | DailyWeather,
+  type: WeatherCardType
+): string | undefined => {
+  if (type === "daily") {
+    const dailyData = data as DailyWeather;
+    return dailyData?.day?.condition?.text;
+  }
+  const weatherData = data as CurrentWeather | HourlyWeather;
+  return weatherData?.condition?.text;
 };
 
-type WeatherData = {
-  temp_c?: number;
-  feelslike_c?: number;
-  humidity?: number;
-  wind_kph?: number;
-  condition?: Condition;
-  day?: { condition?: Condition; avgtemp_c?: number };
-  dt?: number;
+/**
+ * Extracts temperature based on weather type
+ */
+const getTemperature = (
+  data: CurrentWeather | HourlyWeather | DailyWeather,
+  type: WeatherCardType
+): number => {
+  if (type === "daily") {
+    const dailyData = data as DailyWeather;
+    return dailyData?.day?.avgtemp_c ?? (data as any)?.temp_c ?? 0;
+  }
+  const weatherData = data as CurrentWeather | HourlyWeather;
+  return weatherData?.temp_c ?? 0;
 };
 
-type WeatherCardProps = {
-  data?: WeatherData;
-  type?: "current" | "hourly" | "daily";
-};
+const cardBase =
+  "flex-shrink-0 rounded-2xl p-4 text-white shadow-md backdrop-blur-md transition-transform duration-300 hover:scale-105 hover:shadow-xl border border-white/20";
 
-const weatherIcon = (text?: string) => {
-  if (!text) return <WiDaySunny size={32} />;
-  const t = text.toLowerCase();
-  if (t.includes("cloud") || t.includes("nublado")) return <WiCloud size={32} />;
-  if (t.includes("rain") || t.includes("drizzle") || t.includes("lluvia")) return <WiRain size={32} />;
-  if (t.includes("thunder") || t.includes("tormenta")) return <WiThunderstorm size={32} />;
-  if (t.includes("snow") || t.includes("nieve")) return <WiSnow size={32} />;
-  if (t.includes("mist") || t.includes("fog") || t.includes("haze") || t.includes("niebla")) return <WiFog size={32} />;
-  return <WiDaySunny size={32} />;
-};
+const CurrentWeatherCard: FC<{ data: CurrentWeather }> = memo(({ data }) => {
+  const conditionText = useMemo(() => getConditionText(data, "current"), [data]);
+  
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5 }}
+      className={`max-w-3xl w-full ${cardBase} mt-6 bg-gradient-to-br from-white/5 via-white/10 to-white/5`}
+    >
+      <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+        <div className="flex-1">
+          <h2 className="text-3xl font-bold flex items-center gap-3">
+            {formatTemp(data.temp_c ?? 0)}
+            <span className="text-4xl">{getWeatherIcon(conditionText)}</span>
+          </h2>
+          <p className="text-sm opacity-90 mt-1">{conditionText ?? "Desconocido"}</p>
+          <div className="flex gap-4 mt-2 text-sm opacity-80">
+            <span className="flex items-center gap-1">
+              <WiHumidity size={18} /> {data.humidity ?? 0}%
+            </span>
+            <span className="flex items-center gap-1">
+              <WiStrongWind size={18} /> {Math.round(data.wind_kph ?? 0)} km/h
+            </span>
+          </div>
+        </div>
+        <div className="text-right">
+          <p className="text-sm opacity-80">Sensación térmica</p>
+          <p className="text-xl font-semibold">{formatTemp(data.feelslike_c ?? 0)}</p>
+        </div>
+      </div>
+    </motion.div>
+  );
+});
 
-const WeatherCard: FC<WeatherCardProps> = ({ data, type = "current" }) => {
-  if (!data) return null;
+CurrentWeatherCard.displayName = "CurrentWeatherCard";
 
-  const cardBase =
-    "flex-shrink-0 rounded-2xl p-4 text-white shadow-md backdrop-blur-md transition-transform duration-300 hover:scale-105 hover:shadow-xl border border-white/20";
+const HourlyDailyWeatherCard: FC<{ data: HourlyWeather | DailyWeather; type: "hourly" | "daily" }> = memo(
+  ({ data, type }) => {
+    const conditionText = useMemo(() => getConditionText(data, type), [data, type]);
+    const temperature = useMemo(() => getTemperature(data, type), [data, type]);
+    const timeLabel = useMemo(
+      () => (type === "hourly" ? formatHour(data.dt ?? 0) : formatDay(data.dt ?? 0)),
+      [data, type]
+    );
 
-  // Clima actual
-  if (type === "current") {
-    const w = data.condition;
+    const gradient = "bg-gradient-to-br from-white/5 via-white/10 to-white/5";
+
     return (
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-        className={`max-w-3xl w-full ${cardBase} mt-6 bg-gradient-to-br from-white/5 via-white/10 to-white/5`}
+        transition={{ duration: 0.3 }}
+        className={`${cardBase} ${gradient} min-h-[180px] min-w-[120px] max-w-[140px] text-center p-3 flex flex-col items-center justify-center mb-4`}
       >
-        <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-          <div>
-            <h2 className="text-3xl font-bold flex items-center gap-3">
-              {formatTemp(data.temp_c ?? 0)} {weatherIcon(w?.text)}
-            </h2>
-            <p className="text-sm opacity-90 mt-1">{w?.text ?? "Desconocido"}</p>
-            <div className="flex gap-4 mt-2 text-sm opacity-80">
-              <span className="flex items-center gap-1">
-                <WiHumidity /> {data.humidity ?? 0}%
-              </span>
-              <span className="flex items-center gap-1">
-                <WiStrongWind /> {Math.round(data.wind_kph ?? 0)} km/h
-              </span>
-            </div>
-          </div>
-          <div className="text-right">
-            <p className="text-sm opacity-80">Sensación</p>
-            <p className="text-xl font-semibold">{formatTemp(data.feelslike_c ?? 0)}</p>
-          </div>
+        <div className="flex flex-col justify-between h-full items-center w-full">
+          <div className="text-3xl">{getWeatherIcon(conditionText)}</div>
+          <p className="text-sm font-medium opacity-80 mt-1">{timeLabel}</p>
+          <div className="text-lg font-semibold mt-1">{formatTemp(temperature)}</div>
+          <p className="text-xs opacity-70 mt-1 break-words">{conditionText ?? "Desconocido"}</p>
         </div>
       </motion.div>
     );
   }
+);
 
-  // Hourly o Daily
-  const w = type === "daily" ? data.day?.condition || data.condition : data.condition;
-  const temp = type === "daily" ? data.day?.avgtemp_c ?? data.temp_c ?? 0 : data.temp_c ?? 0;
-  const gradient = "bg-gradient-to-br from-white/5 via-white/10 to-white/5";
+HourlyDailyWeatherCard.displayName = "HourlyDailyWeatherCard";
 
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
-      className={`${cardBase} ${gradient} min-h-[180px] min-w-[120px] max-w-[140px] text-center p-3 flex flex-col items-center justify-center mb-4`}
-    >
-      <div className="flex flex-col justify-between h-full items-center">
-        <div className="text-3xl">{weatherIcon(w?.text)}</div>
-        <p className="text-sm font-medium opacity-80 mt-1">
-          {type === "hourly" ? formatHour(data.dt ?? 0) : formatDay(data.dt ?? 0)}
-        </p>
-        <div className="text-lg font-semibold mt-1">{formatTemp(temp)}</div>
-        <p className="text-xs opacity-70 mt-1">{w?.text ?? "Desconocido"}</p>
-      </div>
-    </motion.div>
-  );
-};
+/**
+ * WeatherCard Component
+ * Main component that renders the appropriate weather card based on type
+ */
+const WeatherCard: FC<WeatherCardProps> = memo(({ data, type = "current" }) => {
+  if (!data) return null;
+
+  if (type === "current") {
+    return <CurrentWeatherCard data={data as CurrentWeather} />;
+  }
+
+  return <HourlyDailyWeatherCard data={data} type={type as "hourly" | "daily"} />;
+});
+
+WeatherCard.displayName = "WeatherCard";
 
 export default WeatherCard;

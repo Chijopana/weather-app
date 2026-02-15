@@ -1,86 +1,161 @@
-import { useEffect, useState, useRef } from 'react';
+/**
+ * useWeather Hook
+ * Fetches weather data from WeatherAPI.com with auto-refresh capability
+ */
 
-type WeatherResult = {
-  current: any | null;
-  hourly: any[] | null;
-  daily: any[] | null;
-  timezone?: string;
-  locationName?: string;
-};
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { WeatherData, HourlyWeather, DailyWeather, WeatherAPIResponse } from '../types/weather';
+import { WEATHER_CONFIG, ERROR_MESSAGES } from '../constants/config';
 
-const WEATHERAPI_KEY = process.env.NEXT_PUBLIC_WEATHERAPI_KEY;
-const REFRESH_MINUTES = Number(process.env.NEXT_PUBLIC_REFRESH_MINUTES || '5');
+interface UseWeatherReturn {
+  data: WeatherData | null;
+  loading: boolean;
+  error: string | null;
+  refresh: () => Promise<void>;
+}
 
-export function useWeather(lat?: number, lon?: number, city?: string) {
-  const [data, setData] = useState<WeatherResult | null>(null);
+/**
+ * Custom hook for fetching weather data
+ * @param lat - Latitude coordinate
+ * @param lon - Longitude coordinate
+ * @param city - City name for search
+ * @returns Weather data, loading state, error state, and refresh function
+ */
+export function useWeather(lat?: number, lon?: number, city?: string): UseWeatherReturn {
+  const [data, setData] = useState<WeatherData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const timer = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  const fetchWeather = async (query: string) => {
+  /**
+   * Validates and normalizes API response data
+   */
+  const normalizeWeatherData = (json: WeatherAPIResponse): WeatherData => {
+    const hourly: HourlyWeather[] = json.forecast.forecastday.flatMap((day) =>
+      day.hour.map((h) => ({
+        ...h,
+        dt: Math.floor(new Date(h.time).getTime() / 1000),
+      }))
+    );
+
+    const daily: DailyWeather[] = json.forecast.forecastday.map((d) => ({
+      ...d,
+      dt: Math.floor(new Date(d.date).getTime() / 1000),
+      temp: { day: d.day.avgtemp_c },
+      weather: [{ 
+        main: d.day.condition.text ?? 'Unknown', 
+        description: d.day.condition.text ?? 'Unknown' 
+      }],
+    }));
+
+    return {
+      current: json.current,
+      hourly,
+      daily,
+      timezone: json.location.tz_id,
+      locationName: `${json.location.name}, ${json.location.country}`,
+    };
+  };
+
+  /**
+   * Fetches weather data from API
+   */
+  const fetchWeather = useCallback(async (query: string) => {
+    // Cancel previous request if still pending
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = new AbortController();
+
     setLoading(true);
     setError(null);
+
     try {
-      const url = `https://api.weatherapi.com/v1/forecast.json?key=${WEATHERAPI_KEY}&q=${encodeURIComponent(query)}&days=7&aqi=no&alerts=no&lang=es`;
-      const res = await fetch(url);
-      const json = await res.json();
+      if (!WEATHER_CONFIG.API_KEY) {
+        throw new Error('API key not configured. Please set NEXT_PUBLIC_WEATHERAPI_KEY in environment.');
+      }
 
-      if (json.error) throw new Error(json.error.message);
+      const url = new URL('https://api.weatherapi.com/v1/forecast.json');
+      url.searchParams.append('key', WEATHER_CONFIG.API_KEY);
+      url.searchParams.append('q', query);
+      url.searchParams.append('days', String(WEATHER_CONFIG.FORECAST_DAYS));
+      url.searchParams.append('aqi', 'no');
+      url.searchParams.append('alerts', 'no');
+      url.searchParams.append('lang', 'es');
 
-      // Normalizamos hourly y daily para que dt sea timestamp UNIX en segundos
-      const hourly = json.forecast.forecastday.flatMap((day: any) =>
-        day.hour.map((h: any) => ({
-          ...h,
-          dt: new Date(h.time).getTime() / 1000,
-        }))
-      );
-
-      const daily = json.forecast.forecastday.map((d: any) => ({
-        ...d,
-        dt: new Date(d.date).getTime() / 1000,
-        temp: { day: d.day.avgtemp_c },
-        weather: [{ main: d.day.condition.text, description: d.day.condition.text }],
-      }));
-
-      setData({
-        current: json.current,
-        hourly,
-        daily,
-        timezone: json.location.tz_id,
-        locationName: `${json.location.name}, ${json.location.country}`,
+      const response = await fetch(url.toString(), {
+        signal: abortControllerRef.current.signal,
       });
-    } catch (err: any) {
-      console.error(err);
-      setError(err.message || 'Error fetching weather');
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const json = (await response.json()) as WeatherAPIResponse;
+
+      if ((json as any).error) {
+        throw new Error((json as any).error.message || ERROR_MESSAGES.FETCH_FAILED);
+      }
+
+      setData(normalizeWeatherData(json));
+      setError(null);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      if (error.name === 'AbortError') return; // Request was cancelled
+
+      const message = error.message || ERROR_MESSAGES.FETCH_FAILED;
+      console.error('Weather fetch error:', error);
+      setError(message);
       setData(null);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
+  /**
+   * Effect for fetching weather and setting up auto-refresh
+   */
   useEffect(() => {
-    if (timer.current) clearInterval(timer.current);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+    }
 
-    const doFetch = async () => {
-      if (city) await fetchWeather(city);
-      else if (lat !== undefined && lon !== undefined) await fetchWeather(`${lat},${lon}`);
+    const executeQuery = async () => {
+      if (city) {
+        await fetchWeather(city);
+      } else if (lat !== undefined && lon !== undefined) {
+        await fetchWeather(`${lat},${lon}`);
+      }
     };
 
-    doFetch();
-    timer.current = setInterval(doFetch, REFRESH_MINUTES * 60 * 1000);
+    executeQuery();
+
+    // Set up auto-refresh
+    timerRef.current = setInterval(
+      executeQuery,
+      WEATHER_CONFIG.REFRESH_INTERVAL_MINUTES * 60 * 1000
+    );
 
     return () => {
-      if (timer.current) clearInterval(timer.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+      abortControllerRef.current?.abort();
     };
-  }, [lat, lon, city]);
+  }, [lat, lon, city, fetchWeather]);
+
+  /**
+   * Manual refresh function
+   */
+  const refresh = useCallback(async () => {
+    if (city) {
+      await fetchWeather(city);
+    } else if (lat !== undefined && lon !== undefined) {
+      await fetchWeather(`${lat},${lon}`);
+    }
+  }, [lat, lon, city, fetchWeather]);
 
   return {
     data,
     loading,
     error,
-    refresh: async () => {
-      if (city) await fetchWeather(city);
-      else if (lat !== undefined && lon !== undefined) await fetchWeather(`${lat},${lon}`);
-    },
+    refresh,
   };
 }
