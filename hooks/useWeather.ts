@@ -2,35 +2,37 @@
  * useWeather Hook
  * Fetches weather data from WeatherAPI.com with auto-refresh capability
  */
-
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { WeatherData, HourlyWeather, DailyWeather, WeatherAPIResponse } from '../types/weather';
+import {
+  WeatherData,
+  HourlyWeather,
+  DailyWeather,
+  WeatherAPIResponse,
+  WeatherAPIErrorResponse,
+} from '../types/weather';
 import { WEATHER_CONFIG, ERROR_MESSAGES } from '../constants/config';
 
 interface UseWeatherReturn {
   data: WeatherData | null;
-  loading: boolean;
+  loading: boolean;      // true solo en carga inicial (sin data previa)
+  refreshing: boolean;   // true en refresh con data ya presente
   error: string | null;
   refresh: () => Promise<void>;
 }
 
-/**
- * Custom hook for fetching weather data
- * @param lat - Latitude coordinate
- * @param lon - Longitude coordinate
- * @param city - City name for search
- * @returns Weather data, loading state, error state, and refresh function
- */
+function isErrorResponse(json: unknown): json is WeatherAPIErrorResponse {
+  return typeof json === 'object' && json !== null && 'error' in json;
+}
+
 export function useWeather(lat?: number, lon?: number, city?: string): UseWeatherReturn {
   const [data, setData] = useState<WeatherData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const hasDataRef = useRef(false);
 
-  /**
-   * Validates and normalizes API response data
-   */
   const normalizeWeatherData = (json: WeatherAPIResponse): WeatherData => {
     const hourly: HourlyWeather[] = json.forecast.forecastday.flatMap((day) =>
       day.hour.map((h) => ({
@@ -43,9 +45,9 @@ export function useWeather(lat?: number, lon?: number, city?: string): UseWeathe
       ...d,
       dt: Math.floor(new Date(d.date).getTime() / 1000),
       temp: { day: d.day.avgtemp_c },
-      weather: [{ 
-        main: d.day.condition.text ?? 'Unknown', 
-        description: d.day.condition.text ?? 'Unknown' 
+      weather: [{
+        main: d.day.condition.text ?? 'Unknown',
+        description: d.day.condition.text ?? 'Unknown',
       }],
     }));
 
@@ -55,18 +57,21 @@ export function useWeather(lat?: number, lon?: number, city?: string): UseWeathe
       daily,
       timezone: json.location.tz_id,
       locationName: `${json.location.name}, ${json.location.country}`,
+      astro: json.forecast.forecastday[0]?.astro ?? null,
+      alerts: json.alerts?.alert ?? [],
     };
   };
 
-  /**
-   * Fetches weather data from API
-   */
   const fetchWeather = useCallback(async (query: string) => {
-    // Cancel previous request if still pending
+    const controller = new AbortController();
     abortControllerRef.current?.abort();
-    abortControllerRef.current = new AbortController();
+    abortControllerRef.current = controller;
 
-    setLoading(true);
+    if (hasDataRef.current) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     setError(null);
 
     try {
@@ -79,45 +84,43 @@ export function useWeather(lat?: number, lon?: number, city?: string): UseWeathe
       url.searchParams.append('q', query);
       url.searchParams.append('days', String(WEATHER_CONFIG.FORECAST_DAYS));
       url.searchParams.append('aqi', 'no');
-      url.searchParams.append('alerts', 'no');
+      url.searchParams.append('alerts', 'yes');
       url.searchParams.append('lang', 'es');
 
-      const response = await fetch(url.toString(), {
-        signal: abortControllerRef.current.signal,
-      });
+      const response = await fetch(url.toString(), { signal: controller.signal });
+      const json = (await response.json()) as WeatherAPIResponse | WeatherAPIErrorResponse;
+
+      if (isErrorResponse(json)) {
+        throw new Error(json.error.message || ERROR_MESSAGES.FETCH_FAILED);
+      }
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
 
-      const json = (await response.json()) as WeatherAPIResponse;
-
-      if ((json as any).error) {
-        throw new Error((json as any).error.message || ERROR_MESSAGES.FETCH_FAILED);
-      }
-
       setData(normalizeWeatherData(json));
+      hasDataRef.current = true;
       setError(null);
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
-      if (error.name === 'AbortError') return; // Request was cancelled
+      if (error.name === 'AbortError') return;
 
-      const message = error.message || ERROR_MESSAGES.FETCH_FAILED;
-      console.error('Weather fetch error:', error);
-      setError(message);
-      setData(null);
+      // Solo abortamos si esta sigue siendo la request activa
+      if (abortControllerRef.current === controller) {
+        console.error('Weather fetch error:', error);
+        setError(error.message || ERROR_MESSAGES.FETCH_FAILED);
+        if (!hasDataRef.current) setData(null);
+      }
     } finally {
-      setLoading(false);
+      if (abortControllerRef.current === controller) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
-  /**
-   * Effect for fetching weather and setting up auto-refresh
-   */
   useEffect(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
+    if (timerRef.current) clearInterval(timerRef.current);
 
     const executeQuery = async () => {
       if (city) {
@@ -129,7 +132,6 @@ export function useWeather(lat?: number, lon?: number, city?: string): UseWeathe
 
     executeQuery();
 
-    // Set up auto-refresh
     timerRef.current = setInterval(
       executeQuery,
       WEATHER_CONFIG.REFRESH_INTERVAL_MINUTES * 60 * 1000
@@ -141,9 +143,6 @@ export function useWeather(lat?: number, lon?: number, city?: string): UseWeathe
     };
   }, [lat, lon, city, fetchWeather]);
 
-  /**
-   * Manual refresh function
-   */
   const refresh = useCallback(async () => {
     if (city) {
       await fetchWeather(city);
@@ -152,10 +151,5 @@ export function useWeather(lat?: number, lon?: number, city?: string): UseWeathe
     }
   }, [lat, lon, city, fetchWeather]);
 
-  return {
-    data,
-    loading,
-    error,
-    refresh,
-  };
+  return { data, loading, refreshing, error, refresh };
 }

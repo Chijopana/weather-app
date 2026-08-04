@@ -2,6 +2,42 @@
  * Weather API Type Definitions
  */
 
+
+export interface WeatherAPIErrorResponse {
+  error: {
+    code: number;
+    message: string;
+  };
+}
+
+export interface AstroData {
+  sunrise: string;
+  sunset: string;
+  moonrise: string;
+  moonset: string;
+  moon_phase: string;
+}
+
+export interface WeatherAlert {
+  headline: string;
+  severity: string;
+  event: string;
+  effective: string;
+  expires: string;
+  desc: string;
+}
+
+export interface CitySearchResult {
+  id: number;
+  name: string;
+  region: string;
+  country: string;
+  lat: number;
+  lon: number;
+}
+
+export type TempUnit = 'C' | 'F';
+
 export interface WeatherCondition {
   text?: string;
   icon?: string;
@@ -28,7 +64,7 @@ export interface CurrentWeather {
   wind_degree?: number;
   pressure_mb?: number;
   precip_mm?: number;
-  uv_index?: number;
+  uv?: number; // WeatherAPI usa 'uv', no 'uv_index'
   condition?: WeatherCondition;
   last_updated?: string;
 }
@@ -59,6 +95,8 @@ export interface WeatherData {
   daily: DailyWeather[] | null;
   timezone?: string;
   locationName?: string;
+  astro?: AstroData | null;
+  alerts?: WeatherAlert[];
 }
 
 export interface Coordinates {
@@ -104,7 +142,10 @@ export interface WeatherAPILocation {
 export interface WeatherAPIResponse {
   current: CurrentWeather;
   forecast: {
-    forecastday: WeatherAPIForecastDay[];
+    forecastday: (WeatherAPIForecastDay & { astro: AstroData })[];
   };
   location: WeatherAPILocation;
+  alerts?: {
+    alert: WeatherAlert[];
+  };
 }

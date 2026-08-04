@@ -1,7 +1,3 @@
-/**
- * Application Configuration Constants
- */
-
 export const WEATHER_CONFIG = {
   API_KEY: process.env.NEXT_PUBLIC_WEATHERAPI_KEY,
   REFRESH_INTERVAL_MINUTES: Number(process.env.NEXT_PUBLIC_REFRESH_MINUTES || '5'),
@@ -13,6 +9,13 @@ export const WEATHER_CONFIG = {
     timeout: 10000,
     maximumAge: 1000 * 60 * 5,
   },
+  SEARCH_DEBOUNCE_MS: 300,
+  MAX_RECENT_CITIES: 5,
+};
+
+export const STORAGE_KEYS = {
+  TEMP_UNIT: 'weather_app_temp_unit',
+  RECENT_CITIES: 'weather_app_recent_cities',
 };
 
 export const MAP_CONFIG = {
@@ -32,3 +35,11 @@ export const ERROR_MESSAGES = {
   INVALID_CITY: 'Ciudad no encontrada',
   NETWORK_ERROR: 'Error de conexión',
 };
+
+export const UV_LEVELS = [
+  { max: 2, label: 'Bajo', color: '#4ade80' },
+  { max: 5, label: 'Moderado', color: '#facc15' },
+  { max: 7, label: 'Alto', color: '#fb923c' },
+  { max: 10, label: 'Muy alto', color: '#f87171' },
+  { max: Infinity, label: 'Extremo', color: '#c084fc' },
+];

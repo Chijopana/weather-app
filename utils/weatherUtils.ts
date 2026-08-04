@@ -12,6 +12,64 @@ import {
   WiThunderstorm,
   WiFog,
 } from "react-icons/wi";
+import { UV_LEVELS } from '../constants/config';
+
+/**
+ * Convierte Celsius a Fahrenheit
+ */
+export const celsiusToFahrenheit = (c: number): number => (c * 9) / 5 + 32;
+
+/**
+ * Formatea temperatura según unidad seleccionada
+ */
+export const formatTempUnit = (tempC: number | undefined, unit: 'C' | 'F'): string => {
+  if (tempC === undefined || tempC === null) return '--';
+  const value = unit === 'F' ? celsiusToFahrenheit(tempC) : tempC;
+  return `${Math.round(value)}°${unit}`;
+};
+
+/**
+ * Devuelve color y etiqueta según índice UV
+ */
+export const getUvInfo = (uv: number | undefined) => {
+  const value = uv ?? 0;
+  const level = UV_LEVELS.find((l) => value <= l.max) ?? UV_LEVELS[UV_LEVELS.length - 1];
+  return { value, label: level.label, color: level.color };
+};
+
+/**
+ * Formatea hora de string "HH:MM AM/PM" a "HH:MM"
+ */
+export const formatAstroTime = (time?: string): string => time ?? '--:--';
+
+/**
+ * Regresión lineal simple (mínimos cuadrados) sobre puntos (x, y)
+ * Devuelve slope (pendiente) e intercept
+ */
+export const linearRegression = (points: number[]): { slope: number; intercept: number } => {
+  const n = points.length;
+  if (n < 2) return { slope: 0, intercept: points[0] ?? 0 };
+
+  const xs = points.map((_, i) => i);
+  const sumX = xs.reduce((a, b) => a + b, 0);
+  const sumY = points.reduce((a, b) => a + b, 0);
+  const sumXY = xs.reduce((acc, x, i) => acc + x * points[i], 0);
+  const sumXX = xs.reduce((acc, x) => acc + x * x, 0);
+
+  const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX || 1);
+  const intercept = (sumY - slope * sumX) / n;
+
+  return { slope, intercept };
+};
+
+/**
+ * Predice los próximos N valores a partir de una regresión lineal
+ */
+export const predictNext = (points: number[], count: number): number[] => {
+  const { slope, intercept } = linearRegression(points);
+  const startX = points.length;
+  return Array.from({ length: count }, (_, i) => slope * (startX + i) + intercept);
+};
 
 /**
  * Maps weather condition to background type
