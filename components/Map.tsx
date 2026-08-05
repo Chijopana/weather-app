@@ -39,6 +39,7 @@ L.Icon.Default.mergeOptions({
   iconRetinaUrl: '/leaflet/marker-icon-2x.png',
   shadowUrl: '/leaflet/marker-shadow.png',
 });
+L.Marker.prototype.options.icon = DefaultIcon;
   }, []);
 
   return (
