@@ -1,170 +1,272 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import dynamic from 'next/dynamic';
-import { motion } from 'framer-motion';
-import { FiRefreshCw } from 'react-icons/fi';
+import Head from 'next/head';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { FiAlertCircle, FiRefreshCw } from 'react-icons/fi';
 
-import SearchBar from '../components/SearchBar';
-import WeatherCard from '../components/WeatherCard';
 import Background from '../components/Background';
-import ErrorBoundary from '../components/ErrorBoundary';
-import Carousel from '../components/Carousel';
-import WeatherAlerts from '../components/WeatherAlerts';
-import TemperatureTrend from '../components/TemperatureTrend';
-import TempToggle from '../components/TempToggle';
+import CurrentWeather from '../components/CurrentWeather';
+import DailyForecast from '../components/DailyForecast';
+import HourlyForecast from '../components/HourlyForecast';
 import { WeatherPageSkeleton } from '../components/LoadingSkeleton';
-import { useWeather } from '../hooks/useWeather';
-import { useTempUnit } from '../hooks/useTempUnit';
+import MetricsGrid from '../components/MetricsGrid';
+import SearchBar from '../components/SearchBar';
+import SunArc from '../components/SunArc';
+import TempToggle from '../components/TempToggle';
+import TemperatureTrend from '../components/TemperatureTrend';
+import WeatherAlerts from '../components/WeatherAlerts';
 import { WEATHER_CONFIG } from '../constants/config';
-import type { Coordinates } from '../types/weather';
+import { KIND_LABEL } from '../constants/theme';
+import { useGeolocation } from '../hooks/useGeolocation';
+import { useNow } from '../hooks/useNow';
+import { useTempUnit } from '../hooks/useTempUnit';
+import { useWeather } from '../hooks/useWeather';
+import { getLastQuery, setLastQuery } from '../utils/storage';
+import { conditionKind, formatRelativeTime } from '../utils/weatherUtils';
 
-const MapNoSSR = dynamic(() => import('../components/Map'), { ssr: false });
+const MapNoSSR = dynamic(() => import('../components/Map'), {
+  ssr: false,
+  loading: () => <div className="h-[280px] animate-pulse rounded-2xl bg-white/10" />,
+});
 
 export default function Home() {
-  const [coords, setCoords] = useState<Coordinates | null>(null);
-  const [city, setCity] = useState<string>('');
-  const [geolocationError, setGeolocationError] = useState<string | null>(null);
+  const [query, setQuery] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
 
-  const { data, loading, refreshing, error, refresh } = useWeather(coords?.lat, coords?.lon, city);
+  const { data, loading, refreshing, error, stale, refresh } = useWeather(query);
   const { unit, toggleUnit } = useTempUnit();
+  const geo = useGeolocation();
+  // Reloj a un minuto: mantiene vivos los textos relativos sin invalidar los
+  // memos en cada render.
+  const nowEpoch = useNow();
 
+  const applyQuery = useCallback((next: string) => {
+    setQuery(next);
+    setLastQuery(next);
+  }, []);
+
+  // Se depende de `geo.request` (estable) y no de `geo`, que es un objeto nuevo
+  // en cada render y haria inutil el useCallback.
+  const requestLocation = geo.request;
+  const locate = useCallback(async () => {
+    const coords = await requestLocation();
+    if (coords) applyQuery(`${coords.lat},${coords.lon}`);
+  }, [requestLocation, applyQuery]);
+
+  // Arranque: se intenta la geolocalización y, si falla o se deniega, se cae en
+  // la última ciudad consultada. Antes una denegación dejaba la app en blanco.
   useEffect(() => {
-    if (!navigator.geolocation) {
-      setGeolocationError('Tu navegador no soporta geolocalización');
-      return;
-    }
+    let cancelled = false;
 
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
-        setGeolocationError(null);
-      },
-      (err) => {
-        console.warn('Geolocation error:', err);
-        setGeolocationError('No se pudo obtener tu ubicación. Busca una ciudad manualmente.');
-      },
-      WEATHER_CONFIG.GEOLOCATION_OPTIONS
-    );
+    const boot = async () => {
+      const saved = getLastQuery();
+      const coords = await requestLocation();
+      if (cancelled) return;
+
+      if (coords) applyQuery(`${coords.lat},${coords.lon}`);
+      else if (saved) setQuery(saved);
+
+      setReady(true);
+    };
+
+    void boot();
+    return () => {
+      cancelled = true;
+    };
+    // Solo al montar: `boot` no debe reejecutarse al cambiar la query.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleSearch = useCallback((searchCity: string) => {
-    setCity(searchCity);
-    setCoords(null);
-  }, []);
+  const upcomingHours = useMemo(() => {
+    if (!data || nowEpoch === 0) return [];
+    return data.hourly
+      .filter((h) => h.time_epoch >= nowEpoch - 3600)
+      .slice(0, WEATHER_CONFIG.HOURLY_SLICE_LIMIT);
+  }, [data, nowEpoch]);
 
-  const handleRefresh = useCallback(async () => {
-    await refresh();
-  }, [refresh]);
+  const kind = data ? conditionKind(data.current.condition?.code) : null;
+  const isDay = data ? data.current.is_day === 1 : true;
+  const showSkeleton = (loading || !ready) && !data;
+  const noLocationYet = ready && !query && !data;
 
-  const isLoading = loading && !data;
-
-  // Filtramos horas ya pasadas para el bloque "Por hora"
-  const now = Math.floor(Date.now() / 1000);
-  const upcomingHourly = data?.hourly?.filter((h) => (h.dt ?? 0) >= now) ?? [];
+  const pageTitle = data
+    ? `${Math.round(data.current.temp_c)}°C · ${data.location.name} · Clima`
+    : 'Clima';
 
   return (
-    <ErrorBoundary>
-      <div className="min-h-screen flex flex-col items-center text-white relative font-sans">
-        <Background weatherMain={data?.current?.condition?.text} />
+    <>
+      <Head>
+        <title>{pageTitle}</title>
+        <meta
+          name="description"
+          content="Pronóstico del tiempo por hora y por día, con alertas oficiales, calidad del aire y mapa de la ubicación."
+        />
+      </Head>
 
-        <header className="w-full max-w-3xl p-4 mt-6 flex items-center justify-between">
-          <h1 className="text-3xl font-semibold tracking-wide">Weather</h1>
-          <div className="flex items-center gap-3">
-            <TempToggle unit={unit} onToggle={toggleUnit} />
-            <motion.button
-              onClick={handleRefresh}
-              disabled={loading}
-              whileHover={!loading ? { rotate: 20 } : {}}
-              whileTap={!loading ? { scale: 0.9 } : {}}
-              className="p-2 hover:bg-white/10 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed relative"
-              aria-label="Actualizar"
-              title="Actualizar clima"
-            >
-              <FiRefreshCw size={20} className={loading || refreshing ? 'animate-spin' : ''} />
-            </motion.button>
-            <div className="text-sm opacity-80 text-right hidden sm:block">
-              {data?.locationName ?? data?.timezone ?? 'Ubicación'}
+      <Background kind={kind} isDay={isDay} />
+
+      {/* `relative z-10`: mantiene el contenido por delante de la capa de fondo
+          sin recurrir a z-index negativos en el fondo. */}
+      <div className="relative z-10 flex min-h-screen flex-col text-white">
+        <div className="mx-auto w-full max-w-3xl flex-1 px-4 pb-16 pt-6 sm:px-6">
+          <header className="mb-5 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <h1 className="text-2xl font-semibold tracking-tight">Clima</h1>
+              <p className="h-4 truncate text-xs text-white/55">
+                {data && (
+                  <>
+                    {kind && <span className="capitalize">{KIND_LABEL[kind]}</span>}
+                    {' · actualizado '}
+                    {formatRelativeTime(data.fetchedAt, nowEpoch * 1000)}
+                  </>
+                )}
+              </p>
             </div>
-          </div>
-        </header>
 
-        <SearchBar onSearch={handleSearch} disabled={loading} />
+            <div className="flex shrink-0 items-center gap-2">
+              <TempToggle unit={unit} onToggle={toggleUnit} />
+              <button
+                type="button"
+                onClick={() => void refresh()}
+                disabled={!query || loading || refreshing}
+                aria-label="Actualizar datos"
+                title="Actualizar datos"
+                className="rounded-lg border border-white/15 bg-white/10 p-2 backdrop-blur-md transition hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60 disabled:opacity-40"
+              >
+                <FiRefreshCw
+                  size={17}
+                  className={refreshing || loading ? 'animate-spin motion-reduce:animate-none' : ''}
+                />
+              </button>
+            </div>
+          </header>
 
-        <main className="w-full max-w-3xl px-4 mt-4 space-y-6 pb-12">
-          {geolocationError && !city && (
-            <motion.p
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="text-yellow-300 text-sm bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3"
+          <SearchBar
+            onSearch={(next) => applyQuery(next)}
+            onLocate={() => void locate()}
+            locating={geo.status === 'locating'}
+          />
+
+          <main className="mt-6 space-y-6">
+            {/* Un aviso de geolocalización solo estorba si ya hay datos en pantalla */}
+            {geo.error && !data && (
+              <Notice tone="warning">
+                {geo.error}{' '}
+                <button
+                  type="button"
+                  onClick={() => void locate()}
+                  className="underline underline-offset-2 hover:no-underline"
+                >
+                  Reintentar
+                </button>
+              </Notice>
+            )}
+
+            {error && (
+              <Notice tone="error">
+                {error}
+                {stale && ' Se muestran los últimos datos recibidos.'}
+              </Notice>
+            )}
+
+            {noLocationYet && !geo.error && (
+              <Notice tone="info">Busca una ciudad para ver su pronóstico.</Notice>
+            )}
+
+            {showSkeleton && query && <WeatherPageSkeleton />}
+
+            <AnimatePresence mode="wait">
+              {data && (
+                <motion.div
+                  key={data.location.tz_id + data.location.name}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.25 }}
+                  className={`space-y-6 transition-opacity ${stale ? 'opacity-60' : ''}`}
+                >
+                  <WeatherAlerts alerts={data.alerts} />
+
+                  <CurrentWeather
+                    current={data.current}
+                    location={data.location}
+                    today={data.daily[0]?.day ?? null}
+                    unit={unit}
+                  />
+
+                  <HourlyForecast
+                    hours={upcomingHours}
+                    unit={unit}
+                    timeZone={data.timeZone}
+                    nowEpoch={nowEpoch}
+                  />
+
+                  <DailyForecast
+                    days={data.daily.slice(0, WEATHER_CONFIG.DAILY_SLICE_LIMIT)}
+                    unit={unit}
+                    timeZone={data.timeZone}
+                    nowEpoch={nowEpoch}
+                  />
+
+                  <MetricsGrid current={data.current} />
+
+                  {data.astro && <SunArc astro={data.astro} location={data.location} />}
+
+                  <TemperatureTrend
+                    hourly={data.hourly}
+                    unit={unit}
+                    timeZone={data.timeZone}
+                    nowEpoch={nowEpoch}
+                  />
+
+                  <MapNoSSR
+                    lat={data.location.lat}
+                    lon={data.location.lon}
+                    label={data.location.name}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </main>
+
+          <footer className="mt-10 text-center text-xs text-white/40">
+            Datos de{' '}
+            <a
+              href="https://www.weatherapi.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline underline-offset-2 hover:text-white/70"
             >
-              {geolocationError}
-            </motion.p>
-          )}
-
-          {error && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="text-red-300 text-sm bg-red-500/10 border border-red-500/20 rounded-lg p-3"
-            >
-              <p className="font-medium">{error}</p>
-              <p className="text-xs opacity-80 mt-1">Verifica la ciudad o intenta de nuevo</p>
-            </motion.div>
-          )}
-
-          {isLoading && <WeatherPageSkeleton />}
-
-          {!isLoading && data?.alerts && data.alerts.length > 0 && (
-            <WeatherAlerts alerts={data.alerts} />
-          )}
-
-          {/* Indicador sutil de refresh, sin desmontar la card */}
-          {!isLoading && refreshing && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="flex items-center gap-2 text-xs opacity-60"
-            >
-              <FiRefreshCw size={12} className="animate-spin" /> Actualizando datos...
-            </motion.div>
-          )}
-
-          {!isLoading && data?.current && (
-            <WeatherCard data={data.current} type="current" unit={unit} astro={data.astro} />
-          )}
-
-          {!isLoading && upcomingHourly.length > 0 && (
-            <TemperatureTrend hourly={upcomingHourly} unit={unit} />
-          )}
-
-          {!isLoading && upcomingHourly.length > 0 && (
-            <section>
-              <h2 className="text-white/90 mb-3 text-lg font-medium tracking-wide">Por hora</h2>
-              <Carousel ariaLabel="Pronóstico por hora">
-                {upcomingHourly.slice(0, WEATHER_CONFIG.HOURLY_SLICE_LIMIT).map((h, i) => (
-                  <div key={i} className="snap-start flex-shrink-0">
-                    <WeatherCard data={h} type="hourly" unit={unit} />
-                  </div>
-                ))}
-              </Carousel>
-            </section>
-          )}
-
-          {!isLoading && data?.daily && data.daily.length > 0 && (
-            <section className="mb-8">
-              <h2 className="text-white/90 mb-3 text-lg font-medium tracking-wide">Por día</h2>
-              <Carousel ariaLabel="Pronóstico diario">
-                {data.daily.slice(0, WEATHER_CONFIG.DAILY_SLICE_LIMIT).map((d, i) => (
-                  <div key={i} className="snap-start flex-shrink-0">
-                    <WeatherCard data={d} type="daily" unit={unit} />
-                  </div>
-                ))}
-              </Carousel>
-            </section>
-          )}
-
-          {!isLoading && coords && <MapNoSSR lat={coords.lat} lon={coords.lon} />}
-        </main>
+              WeatherAPI.com
+            </a>
+            {' · mapa de OpenStreetMap'}
+          </footer>
+        </div>
       </div>
-    </ErrorBoundary>
+    </>
+  );
+}
+
+function Notice({
+  tone,
+  children,
+}: {
+  tone: 'error' | 'warning' | 'info';
+  children: React.ReactNode;
+}) {
+  const styles = {
+    error: 'border-red-400/35 bg-red-500/15 text-red-100',
+    warning: 'border-amber-400/35 bg-amber-500/15 text-amber-100',
+    info: 'border-white/15 bg-white/[0.07] text-white/80',
+  }[tone];
+
+  return (
+    <p
+      role={tone === 'error' ? 'alert' : 'status'}
+      className={`flex items-start gap-2 rounded-xl border p-3 text-sm backdrop-blur-md ${styles}`}
+    >
+      <FiAlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+      <span>{children}</span>
+    </p>
   );
 }

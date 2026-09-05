@@ -1,74 +1,65 @@
 /**
- * Loading Skeleton Components
- * Displays placeholder UI while data is loading
+ * Esqueletos de carga.
+ * Replican la geometria real de cada bloque para que la pagina no salte cuando
+ * llegan los datos. `animate-pulse` se anula bajo prefers-reduced-motion.
  */
-
 import React from 'react';
-import { motion } from 'framer-motion';
+
+const shimmer = 'animate-pulse rounded-lg bg-white/10 motion-reduce:animate-none';
 
 export function CurrentWeatherSkeleton() {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="max-w-3xl w-full rounded-2xl p-4 mt-6 bg-gradient-to-br from-white/5 via-white/10 to-white/5 border border-white/20"
-    >
-      <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-        <div className="flex-1">
-          <div className="h-10 bg-white/10 rounded-lg w-40 mb-3 animate-pulse" />
-          <div className="h-4 bg-white/10 rounded-lg w-32 animate-pulse mb-4" />
-          <div className="flex gap-4">
-            <div className="h-4 bg-white/10 rounded-lg w-24 animate-pulse" />
-            <div className="h-4 bg-white/10 rounded-lg w-24 animate-pulse" />
-          </div>
-        </div>
-        <div className="text-right">
-          <div className="h-4 bg-white/10 rounded-lg w-20 mb-2 animate-pulse" />
-          <div className="h-8 bg-white/10 rounded-lg w-24 animate-pulse" />
+    <div className="rounded-3xl border border-white/15 bg-white/[0.07] p-6 backdrop-blur-xl sm:p-8">
+      <div className={`h-5 w-48 ${shimmer}`} />
+      <div className={`mt-2 h-4 w-64 ${shimmer}`} />
+      <div className="mt-6 flex items-center gap-4">
+        <div className={`h-16 w-16 rounded-full ${shimmer}`} />
+        <div>
+          <div className={`h-14 w-32 ${shimmer}`} />
+          <div className={`mt-3 h-4 w-28 ${shimmer}`} />
         </div>
       </div>
-    </motion.div>
+      <div className="mt-6 grid grid-cols-2 gap-3 border-t border-white/10 pt-5 sm:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className={`h-9 ${shimmer}`} />
+        ))}
+      </div>
+    </div>
   );
 }
 
-export function HourlyWeatherSkeleton() {
+export function HourlySkeleton() {
   return (
-    <section className="mt-6">
-      <div className="h-6 bg-white/10 rounded-lg w-24 mb-3 animate-pulse" />
-      <div className="flex gap-4 overflow-hidden">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <div
-            key={i}
-            className="flex-shrink-0 rounded-2xl p-3 bg-gradient-to-br from-white/5 via-white/10 to-white/5 min-h-[180px] min-w-[120px] max-w-[140px] animate-pulse border border-white/20"
-          />
+    <div>
+      <div className={`mb-3 h-4 w-32 ${shimmer}`} />
+      <div className="flex gap-3 overflow-hidden">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div key={i} className={`h-[132px] w-[92px] shrink-0 rounded-2xl ${shimmer}`} />
         ))}
       </div>
-    </section>
+    </div>
   );
 }
 
-export function DailyWeatherSkeleton() {
+export function DailySkeleton() {
   return (
-    <section className="mt-6 mb-8">
-      <div className="h-6 bg-white/10 rounded-lg w-20 mb-3 animate-pulse" />
-      <div className="flex gap-4 overflow-hidden">
-        {Array.from({ length: 7 }).map((_, i) => (
-          <div
-            key={i}
-            className="flex-shrink-0 rounded-2xl p-3 bg-gradient-to-br from-white/5 via-white/10 to-white/5 min-h-[180px] min-w-[120px] max-w-[140px] animate-pulse border border-white/20"
-          />
+    <div>
+      <div className={`mb-3 h-4 w-32 ${shimmer}`} />
+      <div className="space-y-px overflow-hidden rounded-2xl">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className={`h-[52px] ${shimmer} rounded-none`} />
         ))}
       </div>
-    </section>
+    </div>
   );
 }
 
 export function WeatherPageSkeleton() {
   return (
-    <div className="w-full max-w-3xl px-4 mt-4 space-y-6">
+    <div className="space-y-6" aria-hidden="true">
       <CurrentWeatherSkeleton />
-      <HourlyWeatherSkeleton />
-      <DailyWeatherSkeleton />
+      <HourlySkeleton />
+      <DailySkeleton />
     </div>
   );
 }

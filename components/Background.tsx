@@ -1,86 +1,111 @@
 /**
- * Background Component
- * Renders dynamic background with weather-based animations
- * Uses tsparticles for rain/storm effects
+ * Background
+ *
+ * Fondo dinámico: gradiente según condición y momento del día, halo radial que
+ * insinúa el sol o la luna, y partículas de precipitación cuando corresponde.
+ *
+ * Las partículas se desactivan si el usuario pide movimiento reducido y si la
+ * condición no es de precipitación: antes se montaba el motor de tsparticles
+ * (un bundle nada pequeño) también para "nublado", donde no se veía nada.
  */
+import dynamic from 'next/dynamic';
+import React, { memo, useEffect, useMemo } from 'react';
+import type { MoveDirection } from 'tsparticles-engine';
 
-import React, { useMemo, memo } from "react";
-import { weatherToBackground } from "../utils/weatherUtils";
-import { motion } from "framer-motion";
-import dynamic from "next/dynamic";
-import type { MoveDirection } from "tsparticles-engine";
+import { getTheme } from '../constants/theme';
+import { useReducedMotion } from '../hooks/useReducedMotion';
+import type { ConditionKind } from '../types/weather';
+import { hasPrecipitation } from '../utils/weatherUtils';
 
-// Load Particles only on client (avoids SSR errors in Next.js)
-const Particles = dynamic(() => import("react-tsparticles"), { ssr: false });
+const Particles = dynamic(() => import('react-tsparticles'), { ssr: false });
 
 interface BackgroundProps {
-  weatherMain?: string;
+  kind: ConditionKind | null;
+  isDay: boolean;
 }
 
-/**
- * Background component with dynamic weather-based styling
- */
-const Background = memo(function Background({ weatherMain }: BackgroundProps) {
-  const type = weatherToBackground(weatherMain);
+const Background = memo(function Background({ kind, isDay }: BackgroundProps) {
+  const reducedMotion = useReducedMotion();
+  const theme = getTheme(kind, isDay);
 
-  const base = "fixed inset-0 -z-10 transition-all duration-1000";
+  const showParticles = !reducedMotion && kind !== null && hasPrecipitation(kind);
+  const isSnowy = kind === 'snow' || kind === 'sleet';
 
-  // Memoize particle options to prevent unnecessary re-renders
   const particlesOptions = useMemo(
     () => ({
-      background: { color: { value: "transparent" } },
+      fullScreen: { enable: false },
+      background: { color: { value: 'transparent' } },
       fpsLimit: 60,
       particles: {
-        number: { value: type === "storm" ? 80 : 50 },
-        color: { value: "#ffffff" },
-        shape: { type: type === "rain" || type === "storm" ? "line" : "circle" },
-        opacity: { value: 0.3 },
-        size: { value: type === "storm" ? 2 : 1.5 },
+        number: {
+          value: kind === 'storm' ? 90 : isSnowy ? 70 : 60,
+          density: { enable: true, area: 900 },
+        },
+        color: { value: theme.particle },
+        shape: { type: isSnowy ? 'circle' : 'line' },
+        opacity: { value: isSnowy ? 0.7 : 0.35 },
+        size: { value: isSnowy ? 2.5 : kind === 'storm' ? 2 : 1.5 },
         move: {
           enable: true,
-          speed: type === "rain" ? 7 : type === "storm" ? 10 : 1.5,
-          direction: "bottom" as MoveDirection,
-          straight: type === "rain" || type === "storm",
+          speed: isSnowy ? 1.5 : kind === 'storm' ? 11 : kind === 'drizzle' ? 4 : 8,
+          direction: 'bottom' as MoveDirection,
+          straight: !isSnowy,
+          drift: isSnowy ? 0.4 : 0,
         },
       },
-      interactivity: {
-        events: {
-          onHover: { enable: false },
-          onClick: { enable: false },
-        },
-      },
+      interactivity: { events: { onHover: { enable: false }, onClick: { enable: false } } },
       detectRetina: true,
     }),
-    [type]
+    [kind, isSnowy, theme.particle]
   );
 
-  // Color gradients based on weather condition
-  const gradients: Record<string, string> = {
-    clear: "from-sky-400 via-sky-300 to-indigo-500",
-    clouds: "from-gray-300 via-gray-400 to-gray-600",
-    rain: "from-blue-600 via-blue-500 to-blue-700",
-    storm: "from-purple-800 via-indigo-800 to-black",
-    snow: "from-white via-slate-200 to-slate-400",
-    mist: "from-stone-200 via-stone-300 to-stone-400",
-    default: "from-cyan-400 via-blue-400 to-indigo-600",
-  };
+  const [top, mid, bottom] = theme.gradient;
 
-  const gradientClass = gradients[type] || gradients.default;
+  // El lienzo (html) toma el color inferior del degradado. Asi, cualquier zona
+  // que esta capa no llegue a cubrir -rebote de scroll, barra de direcciones
+  // replegandose en movil- queda del mismo color en lugar de contrastar.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--wx-bottom', bottom);
+    root.style.setProperty('--wx-top', top);
+  }, [top, bottom]);
 
   return (
-    <motion.div
-      key={type}
-      className={`${base} bg-gradient-to-b ${gradientClass}`}
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 1.5 }}
-      aria-hidden="true"
-      role="presentation"
-    >
-      {(type === "rain" || type === "storm") && (
-        <Particles id="weather-particles" options={particlesOptions} />
+    // `z-0` con el contenido en `z-10`, en vez de un z-index negativo: los
+    // valores negativos pueden colarse por detras del lienzo segun como se
+    // formen los contextos de apilamiento.
+    <div className="fixed inset-0 z-0 overflow-hidden" aria-hidden="true">
+      {/* Gradiente base. La transición larga hace que el cambio de ciudad o el
+          paso día/noche se sienta como una disolvencia, no como un corte. */}
+      <div
+        className="absolute inset-0 transition-[background] duration-1000 ease-out motion-reduce:transition-none"
+        style={{ background: `linear-gradient(to bottom, ${top} 0%, ${mid} 55%, ${bottom} 100%)` }}
+      />
+
+      {/* Halo del astro, arriba a la derecha */}
+      <div
+        className="absolute -right-24 -top-24 h-[28rem] w-[28rem] rounded-full blur-3xl transition-colors duration-1000 motion-reduce:transition-none"
+        style={{ background: `radial-gradient(circle, ${theme.glow} 0%, transparent 70%)` }}
+      />
+
+      {/* Segundo halo, más tenue, para que el degradado no se vea plano */}
+      <div
+        className="absolute -bottom-32 -left-20 h-[24rem] w-[24rem] rounded-full blur-3xl opacity-60 transition-colors duration-1000 motion-reduce:transition-none"
+        style={{ background: `radial-gradient(circle, ${theme.glow} 0%, transparent 70%)` }}
+      />
+
+      {showParticles && (
+        <Particles
+          id="weather-particles"
+          className="absolute inset-0"
+          options={particlesOptions}
+        />
       )}
-    </motion.div>
+
+      {/* Viñeta inferior: asienta el contenido y sube el contraste del texto
+          sobre las paletas más claras (niebla, nieve de día). */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/35 via-transparent to-black/10" />
+    </div>
   );
 });
 

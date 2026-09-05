@@ -1,18 +1,24 @@
-import { useState, useEffect, useCallback } from 'react';
-import { TempUnit } from '../types/weather';
-import { getTempUnit, setTempUnit as persistTempUnit } from '../utils/storage';
+import { useCallback, useEffect, useState } from 'react';
 
+import type { TempUnit } from '../types/weather';
+import { getTempUnit, setTempUnit as persist } from '../utils/storage';
+
+/**
+ * Unidad de temperatura persistida.
+ * El estado arranca en 'C' y se hidrata en un efecto: leer localStorage durante
+ * el render provocaria un desajuste de hidratacion con el HTML del servidor.
+ */
 export function useTempUnit() {
-  const [unit, setUnitState] = useState<TempUnit>('C');
+  const [unit, setUnit] = useState<TempUnit>('C');
 
   useEffect(() => {
-    setUnitState(getTempUnit());
+    setUnit(getTempUnit());
   }, []);
 
   const toggleUnit = useCallback(() => {
-    setUnitState((prev) => {
-      const next = prev === 'C' ? 'F' : 'C';
-      persistTempUnit(next);
+    setUnit((prev) => {
+      const next: TempUnit = prev === 'C' ? 'F' : 'C';
+      persist(next);
       return next;
     });
   }, []);

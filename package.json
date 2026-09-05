@@ -1,8 +1,8 @@
 {
-  "name": "weather-app",
+  "name": "app-clima",
   "version": "1.0.0",
-  "description": "A beautiful weather application built with Next.js, React, and TypeScript",
-  "author": "Your Name",
+  "description": "Aplicación de pronóstico del tiempo con Next.js, TypeScript y WeatherAPI.",
+  "author": "Jose Blondel",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
@@ -11,7 +11,9 @@
     "lint": "next lint",
     "type-check": "tsc --noEmit",
     "format": "prettier --write \"**/*.{ts,tsx,md,json}\"",
-    "format:check": "prettier --check \"**/*.{ts,tsx,md,json}\""
+    "format:check": "prettier --check \"**/*.{ts,tsx,md,json}\"",
+    "test:utils": "tsc utils/weatherUtils.ts --outDir .tmp-test --module commonjs --target ES2020 --moduleResolution node --esModuleInterop --skipLibCheck && node tests/weatherUtils.test.js",
+    "icons": "node tools/make-icons.js public"
   },
   "dependencies": {
     "framer-motion": "^12.23.16",
@@ -30,12 +32,14 @@
     "@types/node": "^20.4.2",
     "@types/react": "^18.2.14",
     "autoprefixer": "^10.4.14",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^14.2.35",
     "postcss": "^8.4.24",
     "tailwindcss": "^3.4.8",
     "typescript": "^5.4.2"
   },
   "engines": {
-    "node": ">=16.0.0",
-    "npm": ">=8.0.0"
+    "node": ">=18.17.0",
+    "npm": ">=9.0.0"
   }
 }

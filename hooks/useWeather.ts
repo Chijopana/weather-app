@@ -1,22 +1,28 @@
 /**
- * useWeather Hook
- * Fetches weather data from WeatherAPI.com with auto-refresh capability
+ * useWeather
+ *
+ * Pide el clima a /api/weather (proxy propio: la API key nunca llega al
+ * navegador), normaliza la respuesta y mantiene un auto-refresh que se pausa
+ * cuando la pestaña está oculta o el navegador está sin conexión.
  */
-import { useEffect, useState, useRef, useCallback } from 'react';
-import {
-  WeatherData,
-  HourlyWeather,
-  DailyWeather,
-  WeatherAPIResponse,
-  WeatherAPIErrorResponse,
-} from '../types/weather';
-import { WEATHER_CONFIG, ERROR_MESSAGES } from '../constants/config';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-interface UseWeatherReturn {
+import { ERROR_MESSAGES, WEATHER_CONFIG } from '../constants/config';
+import type {
+  WeatherAPIErrorResponse,
+  WeatherAPIResponse,
+  WeatherData,
+} from '../types/weather';
+
+export interface UseWeatherReturn {
   data: WeatherData | null;
-  loading: boolean;      // true solo en carga inicial (sin data previa)
-  refreshing: boolean;   // true en refresh con data ya presente
+  /** Carga inicial: aún no hay nada que mostrar */
+  loading: boolean;
+  /** Recarga en segundo plano: ya hay datos en pantalla */
+  refreshing: boolean;
   error: string | null;
+  /** Hay datos en pantalla pero el último intento falló */
+  stale: boolean;
   refresh: () => Promise<void>;
 }
 
@@ -24,132 +30,151 @@ function isErrorResponse(json: unknown): json is WeatherAPIErrorResponse {
   return typeof json === 'object' && json !== null && 'error' in json;
 }
 
-export function useWeather(lat?: number, lon?: number, city?: string): UseWeatherReturn {
+function normalize(json: WeatherAPIResponse): WeatherData {
+  const days = json.forecast?.forecastday ?? [];
+
+  return {
+    location: json.location,
+    current: json.current,
+    // Aplanamos todas las horas de todos los días y ordenamos por epoch:
+    // el consumidor solo tiene que cortar, no reordenar.
+    hourly: days.flatMap((d) => d.hour ?? []).sort((a, b) => a.time_epoch - b.time_epoch),
+    daily: days,
+    astro: days[0]?.astro ?? null,
+    alerts: json.alerts?.alert ?? [],
+    timeZone: json.location?.tz_id || 'UTC',
+    fetchedAt: Date.now(),
+  };
+}
+
+export function useWeather(query: string | null): UseWeatherReturn {
   const [data, setData] = useState<WeatherData | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const [stale, setStale] = useState(false);
+
+  const abortRef = useRef<AbortController | null>(null);
   const hasDataRef = useRef(false);
+  const lastFetchRef = useRef(0);
+  // La query viva se guarda en una ref para que el temporizador de auto-refresh
+  // no tenga que recrearse (ni perder su fase) en cada render.
+  const queryRef = useRef<string | null>(query);
+  queryRef.current = query;
 
-  const normalizeWeatherData = (json: WeatherAPIResponse): WeatherData => {
-    const hourly: HourlyWeather[] = json.forecast.forecastday.flatMap((day) =>
-      day.hour.map((h) => ({
-        ...h,
-        dt: Math.floor(new Date(h.time).getTime() / 1000),
-      }))
-    );
-
-    const daily: DailyWeather[] = json.forecast.forecastday.map((d) => ({
-      ...d,
-      dt: Math.floor(new Date(d.date).getTime() / 1000),
-      temp: { day: d.day.avgtemp_c },
-      weather: [{
-        main: d.day.condition.text ?? 'Unknown',
-        description: d.day.condition.text ?? 'Unknown',
-      }],
-    }));
-
-    return {
-      current: json.current,
-      hourly,
-      daily,
-      timezone: json.location.tz_id,
-      locationName: `${json.location.name}, ${json.location.country}`,
-      astro: json.forecast.forecastday[0]?.astro ?? null,
-      alerts: json.alerts?.alert ?? [],
-    };
-  };
-
-  const fetchWeather = useCallback(async (query: string) => {
+  const fetchWeather = useCallback(async (q: string) => {
+    abortRef.current?.abort();
     const controller = new AbortController();
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = controller;
+    abortRef.current = controller;
+    lastFetchRef.current = Date.now();
 
-    if (hasDataRef.current) {
-      setRefreshing(true);
-    } else {
-      setLoading(true);
-    }
-    setError(null);
+    if (hasDataRef.current) setRefreshing(true);
+    else setLoading(true);
 
     try {
-      if (!WEATHER_CONFIG.API_KEY) {
-        throw new Error('API key not configured. Please set NEXT_PUBLIC_WEATHERAPI_KEY in environment.');
+      const res = await fetch(`/api/weather?q=${encodeURIComponent(q)}`, {
+        signal: controller.signal,
+      });
+
+      let json: unknown;
+      try {
+        json = await res.json();
+      } catch {
+        throw new Error(ERROR_MESSAGES.FETCH_FAILED);
       }
 
-      const url = new URL('https://api.weatherapi.com/v1/forecast.json');
-      url.searchParams.append('key', WEATHER_CONFIG.API_KEY);
-      url.searchParams.append('q', query);
-      url.searchParams.append('days', String(WEATHER_CONFIG.FORECAST_DAYS));
-      url.searchParams.append('aqi', 'no');
-      url.searchParams.append('alerts', 'yes');
-      url.searchParams.append('lang', 'es');
-
-      const response = await fetch(url.toString(), { signal: controller.signal });
-      const json = (await response.json()) as WeatherAPIResponse | WeatherAPIErrorResponse;
-
-      if (isErrorResponse(json)) {
-        throw new Error(json.error.message || ERROR_MESSAGES.FETCH_FAILED);
+      if (!res.ok || isErrorResponse(json)) {
+        const message = isErrorResponse(json) ? json.error.message : `Error ${res.status}`;
+        throw new Error(message || ERROR_MESSAGES.FETCH_FAILED);
       }
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      setData(normalizeWeatherData(json));
+      setData(normalize(json as WeatherAPIResponse));
       hasDataRef.current = true;
       setError(null);
+      setStale(false);
     } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      if (error.name === 'AbortError') return;
+      if (err instanceof Error && err.name === 'AbortError') return;
+      // Una respuesta tardía de una petición ya reemplazada no debe pisar el estado.
+      if (abortRef.current !== controller) return;
 
-      // Solo abortamos si esta sigue siendo la request activa
-      if (abortControllerRef.current === controller) {
-        console.error('Weather fetch error:', error);
-        setError(error.message || ERROR_MESSAGES.FETCH_FAILED);
-        if (!hasDataRef.current) setData(null);
-      }
+      const message =
+        typeof navigator !== 'undefined' && navigator.onLine === false
+          ? ERROR_MESSAGES.OFFLINE
+          : err instanceof Error
+            ? err.message
+            : ERROR_MESSAGES.FETCH_FAILED;
+
+      setError(message);
+      // Se conservan los datos previos: mejor un dato viejo etiquetado como tal
+      // que una pantalla vacía.
+      setStale(hasDataRef.current);
     } finally {
-      if (abortControllerRef.current === controller) {
+      if (abortRef.current === controller) {
         setLoading(false);
         setRefreshing(false);
       }
     }
   }, []);
 
-  useEffect(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
+  const refresh = useCallback(async () => {
+    const q = queryRef.current;
+    if (q) await fetchWeather(q);
+  }, [fetchWeather]);
 
-    const executeQuery = async () => {
-      if (city) {
-        await fetchWeather(city);
-      } else if (lat !== undefined && lon !== undefined) {
-        await fetchWeather(`${lat},${lon}`);
+  // Carga cada vez que cambia la query
+  useEffect(() => {
+    if (!query) return;
+    void fetchWeather(query);
+  }, [query, fetchWeather]);
+
+  // Aborta cualquier petición en vuelo al desmontar
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  // Auto-refresh: no gasta cuota mientras nadie mira la pestaña, y se pone al
+  // día en cuanto el usuario vuelve si el dato ya caducó.
+  useEffect(() => {
+    if (!query) return undefined;
+
+    const intervalMs = Math.max(1, WEATHER_CONFIG.REFRESH_INTERVAL_MINUTES) * 60_000;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const tick = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (navigator.onLine === false) return;
+      void refresh();
+    };
+
+    const start = () => {
+      if (timer === null) timer = setInterval(tick, intervalMs);
+    };
+    const stop = () => {
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
       }
     };
 
-    executeQuery();
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible') {
+        stop();
+        return;
+      }
+      start();
+      // Solo se pone al día si el dato ya caducó: alternar pestañas rápido no
+      // debe convertirse en una ráfaga de peticiones.
+      if (Date.now() - lastFetchRef.current >= intervalMs) void refresh();
+    };
 
-    timerRef.current = setInterval(
-      executeQuery,
-      WEATHER_CONFIG.REFRESH_INTERVAL_MINUTES * 60 * 1000
-    );
+    if (document.visibilityState === 'visible') start();
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('online', handleVisibility);
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      abortControllerRef.current?.abort();
+      stop();
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('online', handleVisibility);
     };
-  }, [lat, lon, city, fetchWeather]);
+  }, [query, refresh]);
 
-  const refresh = useCallback(async () => {
-    if (city) {
-      await fetchWeather(city);
-    } else if (lat !== undefined && lon !== undefined) {
-      await fetchWeather(`${lat},${lon}`);
-    }
-  }, [lat, lon, city, fetchWeather]);
-
-  return { data, loading, refreshing, error, refresh };
+  return { data, loading, refreshing, error, stale, refresh };
 }

@@ -1,92 +1,120 @@
 /**
- * Carousel Component
- * Contenedor arrastrable con navegación por teclado y botones prev/next
+ * Carousel
+ *
+ * Scroll horizontal nativo con snap, más botones de avance en escritorio.
+ *
+ * La versión anterior emulaba el scroll con `drag` de framer-motion sobre un
+ * contenedor `overflow-hidden`. Eso rompía el gesto táctil nativo, ignoraba la
+ * rueda horizontal del trackpad, dejaba el desplazamiento desincronizado al
+ * redimensionar la ventana y volvía el contenido inalcanzable para lectores de
+ * pantalla. El scroll nativo trae todo eso resuelto y sin JavaScript.
  */
-import React, { FC, ReactNode, useRef, useState, useEffect, KeyboardEvent } from 'react';
-import { motion } from 'framer-motion';
+import React, { FC, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { FiChevronLeft, FiChevronRight } from 'react-icons/fi';
 
 interface CarouselProps {
-  children: ReactNode[];
-  itemWidth?: number; // ancho aproximado de cada item + gap, para el scroll por botones
+  children: ReactNode;
   ariaLabel: string;
 }
 
-const Carousel: FC<CarouselProps> = ({ children, itemWidth = 136, ariaLabel }) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [dragWidth, setDragWidth] = useState(0);
-  const [scrollX, setScrollX] = useState(0);
+const Carousel: FC<CarouselProps> = ({ children, ariaLabel }) => {
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const [atStart, setAtStart] = useState(true);
+  const [atEnd, setAtEnd] = useState(true);
+
+  const syncEdges = useCallback(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    // 1px de tolerancia: el scroll fraccionario de algunos zooms nunca llega
+    // exactamente al final y dejaría el botón habilitado para siempre.
+    setAtStart(el.scrollLeft <= 1);
+    setAtEnd(el.scrollLeft >= el.scrollWidth - el.clientWidth - 1);
+  }, []);
 
   useEffect(() => {
-    if (containerRef.current) {
-      const { scrollWidth, offsetWidth } = containerRef.current;
-      setDragWidth(Math.max(0, scrollWidth - offsetWidth));
-    }
-  }, [children]);
+    const el = scrollerRef.current;
+    if (!el) return undefined;
 
-  const scrollBy = (direction: 1 | -1) => {
-    const next = Math.min(Math.max(scrollX - direction * itemWidth * 3, -dragWidth), 0);
-    setScrollX(next);
+    syncEdges();
+    el.addEventListener('scroll', syncEdges, { passive: true });
+
+    // Recalcula al cambiar el tamaño del contenedor o del contenido, no solo
+    // al montar: rotar el móvil o abrir las herramientas de desarrollo cambiaba
+    // los límites y los botones se quedaban mintiendo.
+    const observer = new ResizeObserver(syncEdges);
+    observer.observe(el);
+    for (const child of Array.from(el.children)) observer.observe(child);
+
+    return () => {
+      el.removeEventListener('scroll', syncEdges);
+      observer.disconnect();
+    };
+  }, [syncEdges, children]);
+
+  const scrollByPage = (direction: 1 | -1) => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    el.scrollBy({ left: direction * el.clientWidth * 0.8, behavior: 'smooth' });
   };
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key === 'ArrowRight') {
-      e.preventDefault();
-      scrollBy(1);
-    } else if (e.key === 'ArrowLeft') {
-      e.preventDefault();
-      scrollBy(-1);
-    }
-  };
+  const hasOverflow = !(atStart && atEnd);
 
   return (
-    <div className="relative group">
-      {dragWidth > 0 && (
+    <div className="relative">
+      {hasOverflow && (
         <>
-          <button
-            onClick={() => scrollBy(-1)}
-            disabled={scrollX >= 0}
-            className="hidden sm:flex absolute left-0 top-1/2 -translate-y-1/2 z-10 items-center justify-center w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 disabled:opacity-0 transition-all -translate-x-3"
-            aria-label="Anterior"
-          >
-            <FiChevronLeft size={18} />
-          </button>
-          <button
-            onClick={() => scrollBy(1)}
-            disabled={scrollX <= -dragWidth}
-            className="hidden sm:flex absolute right-0 top-1/2 -translate-y-1/2 z-10 items-center justify-center w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 disabled:opacity-0 transition-all translate-x-3"
-            aria-label="Siguiente"
-          >
-            <FiChevronRight size={18} />
-          </button>
+          <ArrowButton
+            side="left"
+            disabled={atStart}
+            onClick={() => scrollByPage(-1)}
+            label="Desplazar a la izquierda"
+          />
+          <ArrowButton
+            side="right"
+            disabled={atEnd}
+            onClick={() => scrollByPage(1)}
+            label="Desplazar a la derecha"
+          />
         </>
       )}
 
       <div
-        ref={containerRef}
-        role="region"
+        ref={scrollerRef}
+        role="group"
         aria-label={ariaLabel}
         tabIndex={0}
-        onKeyDown={handleKeyDown}
-        className="flex gap-4 snap-x snap-mandatory cursor-grab active:cursor-grabbing overflow-hidden focus:outline-none focus:ring-2 focus:ring-purple-400 rounded-xl"
+        className="scrollbar-hide flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth rounded-2xl pb-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 motion-reduce:scroll-auto"
       >
-        <motion.div
-          drag="x"
-          dragConstraints={{ right: 0, left: -dragWidth }}
-          dragElastic={0.2}
-          dragMomentum={true}
-          animate={{ x: scrollX }}
-          transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-          onDragEnd={(_, info) => {
-            setScrollX((prev) => Math.min(Math.max(prev + info.offset.x, -dragWidth), 0));
-          }}
-          className="flex gap-4"
-        >
-          {children}
-        </motion.div>
+        {children}
       </div>
     </div>
   );
 };
+
+function ArrowButton({
+  side,
+  disabled,
+  onClick,
+  label,
+}: {
+  side: 'left' | 'right';
+  disabled: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      className={`absolute top-1/2 z-10 hidden h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white/20 bg-black/45 text-white backdrop-blur-sm transition hover:bg-black/65 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:pointer-events-none disabled:opacity-0 sm:flex ${
+        side === 'left' ? '-left-3' : '-right-3'
+      }`}
+    >
+      {side === 'left' ? <FiChevronLeft size={18} /> : <FiChevronRight size={18} />}
+    </button>
+  );
+}
 
 export default Carousel;

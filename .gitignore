@@ -30,3 +30,9 @@ Thumbs.db
 
 # Yarn
 .pnp.*
+
+# Salida de la transpilacion de pruebas
+.tmp-test/
+
+# Cache incremental de TypeScript
+*.tsbuildinfo

@@ -1,6 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+
 import { WEATHER_CONFIG } from '../constants/config';
-import { getRecentCities, addRecentCity, clearRecentCities } from '../utils/storage';
+import {
+  addRecentCity,
+  clearRecentCities,
+  getRecentCities,
+  removeRecentCity,
+} from '../utils/storage';
 
 export function useRecentCities() {
   const [cities, setCities] = useState<string[]>([]);
@@ -10,8 +16,11 @@ export function useRecentCities() {
   }, []);
 
   const addCity = useCallback((city: string) => {
-    const updated = addRecentCity(city, WEATHER_CONFIG.MAX_RECENT_CITIES);
-    setCities(updated);
+    setCities(addRecentCity(city, WEATHER_CONFIG.MAX_RECENT_CITIES));
+  }, []);
+
+  const removeCity = useCallback((city: string) => {
+    setCities(removeRecentCity(city));
   }, []);
 
   const clearAll = useCallback(() => {
@@ -19,5 +28,5 @@ export function useRecentCities() {
     setCities([]);
   }, []);
 
-  return { cities, addCity, clearAll };
+  return { cities, addCity, removeCity, clearAll };
 }

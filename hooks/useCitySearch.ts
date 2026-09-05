@@ -1,57 +1,62 @@
 /**
- * useCitySearch Hook
- * Autocomplete de ciudades usando WeatherAPI /search.json
+ * useCitySearch
+ * Autocompletado de ciudades contra /api/search (proxy propio, sin API key
+ * en el cliente). Debounce + cancelacion de la peticion anterior.
  */
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { CitySearchResult } from '../types/weather';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
 import { WEATHER_CONFIG } from '../constants/config';
+import type { CitySearchResult } from '../types/weather';
+
+const MIN_QUERY_LENGTH = 2;
 
 export function useCitySearch(query: string) {
   const [results, setResults] = useState<CitySearchResult[]>([]);
   const [loading, setLoading] = useState(false);
-  const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const search = useCallback(async (q: string) => {
-    if (q.trim().length < 2) {
-      setResults([]);
-      return;
-    }
-
     abortRef.current?.abort();
-    abortRef.current = new AbortController();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
 
     try {
-      const url = new URL('https://api.weatherapi.com/v1/search.json');
-      url.searchParams.append('key', WEATHER_CONFIG.API_KEY || '');
-      url.searchParams.append('q', q);
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, {
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error('search failed');
 
-      const res = await fetch(url.toString(), { signal: abortRef.current.signal });
-      if (!res.ok) throw new Error('Search failed');
-
-      const data = (await res.json()) as CitySearchResult[];
-      setResults(data);
+      const data: unknown = await res.json();
+      if (abortRef.current !== controller) return;
+      setResults(Array.isArray(data) ? (data as CitySearchResult[]) : []);
     } catch (err) {
-      if ((err as Error).name !== 'AbortError') {
-        setResults([]);
-      }
+      if (err instanceof Error && err.name === 'AbortError') return;
+      if (abortRef.current === controller) setResults([]);
     } finally {
-      setLoading(false);
+      if (abortRef.current === controller) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const trimmed = query.trim();
 
-    debounceRef.current = setTimeout(() => {
-      search(query);
-    }, WEATHER_CONFIG.SEARCH_DEBOUNCE_MS);
+    if (trimmed.length < MIN_QUERY_LENGTH) {
+      abortRef.current?.abort();
+      setResults([]);
+      setLoading(false);
+      return undefined;
+    }
 
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
+    // Se marca "buscando" ya durante el debounce: si no, el dropdown muestra
+    // "Sin resultados" durante 300 ms antes de que la peticion siquiera salga.
+    setLoading(true);
+    const timer = setTimeout(() => void search(trimmed), WEATHER_CONFIG.SEARCH_DEBOUNCE_MS);
+
+    return () => clearTimeout(timer);
   }, [query, search]);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   return { results, loading };
 }

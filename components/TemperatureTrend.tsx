@@ -1,104 +1,321 @@
 /**
- * TemperatureTrend Component
- * Predicción simple de temperatura con regresión lineal sobre las próximas horas.
- * Diferenciador de portfolio: mezcla frontend con un modelito ligero client-side.
+ * TemperatureTrend
+ *
+ * Ajusta una regresión lineal sobre las horas YA TRANSCURRIDAS de hoy, la
+ * extrapola 6 horas y la superpone al pronóstico real de la API para esas mismas
+ * horas. El interés está en la comparación: cuánto se aleja un modelo ingenuo
+ * del pronóstico de verdad.
+ *
+ * La versión anterior ajustaba la recta sobre las horas FUTURAS del pronóstico y
+ * las rotulaba como "las últimas 12h", para luego "predecir" un tramo que la API
+ * ya entregaba. Además extrapolaba sin límite, así que una mañana de rápido
+ * calentamiento proyectaba temperaturas imposibles.
+ *
+ * Colores: slots 1 y 2 de la paleta categórica en modo oscuro, verificados con
+ * el validador (banda de luminosidad, croma, separación CVD y contraste).
+ * El gráfico lleva su propio fondo oscuro fijo para que ese contraste se cumpla
+ * sea cual sea el gradiente meteorológico que haya detrás.
  */
-import React, { FC, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { FiTrendingUp, FiTrendingDown, FiMinus } from 'react-icons/fi';
-import { HourlyWeather } from '../types/weather';
-import { predictNext } from '../utils/weatherUtils';
+import React, { memo, useMemo, useState } from 'react';
+
+import type { HourWeather, TempUnit } from '../types/weather';
+import { deltaToUnit, formatHour, linearRegression, rSquared, toUnit } from '../utils/weatherUtils';
 
 interface TemperatureTrendProps {
-  hourly: HourlyWeather[];
-  unit: 'C' | 'F';
+  hourly: HourWeather[];
+  unit: TempUnit;
+  timeZone: string;
+  nowEpoch: number;
 }
 
-const PREDICT_HOURS = 6;
-const HISTORY_WINDOW = 12; // usamos las últimas 12h disponibles como entrada del modelo
+const HISTORY_HOURS = 12;
+const HORIZON_HOURS = 6;
+const MIN_HISTORY = 6;
 
-const TemperatureTrend: FC<TemperatureTrendProps> = ({ hourly, unit }) => {
-  const { predicted, trendDirection, sparklinePoints, lastActual, lastPredicted } = useMemo(() => {
-  const temps = hourly.slice(0, HISTORY_WINDOW).map((h) => h.temp_c ?? 0);
-  if (temps.length < 3) {
-    return { predicted: [], trendDirection: 'flat' as const, sparklinePoints: '', lastActual: 0, lastPredicted: 0 };
-  }
+const W = 320;
+const H = 120;
+const PAD_X = 8;
+const PAD_TOP = 12;
+const PAD_BOTTOM = 22;
 
-  const predicted = predictNext(temps, PREDICT_HOURS);
-  const delta = predicted[predicted.length - 1] - temps[temps.length - 1];
-  const trendDirection = delta > 0.5 ? 'up' : delta < -0.5 ? 'down' : 'flat';
+const SERIES = {
+  model: '#3987e5',
+  forecast: '#d95926',
+  observed: 'rgba(255,255,255,0.72)',
+};
 
-  const allValues = [...temps, ...predicted];
-  const min = Math.min(...allValues);
-  const max = Math.max(...allValues);
-  const range = max - min || 1;
+const TemperatureTrend = memo(function TemperatureTrend({
+  hourly,
+  unit,
+  timeZone,
+  nowEpoch,
+}: TemperatureTrendProps) {
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
-  const width = 240;
-  const height = 60;
-  const step = width / (allValues.length - 1);
+  const chart = useMemo(() => {
+    const past = hourly.filter((h) => h.time_epoch <= nowEpoch).slice(-HISTORY_HOURS);
+    const future = hourly.filter((h) => h.time_epoch > nowEpoch).slice(0, HORIZON_HOURS);
 
-  const sparklinePoints = allValues
-    .map((v, i) => {
-      const x = i * step;
-      const y = height - ((v - min) / range) * height;
-      return `${x},${y}`;
-    })
-    .join(' ');
+    // De madrugada apenas hay horas transcurridas: sin base suficiente el ajuste
+    // no significa nada, así que el módulo no se muestra.
+    if (past.length < MIN_HISTORY || future.length < HORIZON_HOURS) return null;
 
-  return {
-    predicted,
-    trendDirection,
-    sparklinePoints,
-    lastActual: temps[temps.length - 1],
-    lastPredicted: predicted[predicted.length - 1],
+    const observed = past.map((h) => h.temp_c);
+    const { slope, intercept } = linearRegression(observed);
+    const fit = rSquared(observed);
+
+    // El modelo se ancla al último valor observado en lugar de arrancar en el
+    // intercepto: así el salto visual en la juntura no confunde.
+    const anchor = slope * (observed.length - 1) + intercept;
+    const offset = observed[observed.length - 1] - anchor;
+
+    const modelValues = future.map((_, i) => slope * (observed.length + i) + intercept + offset);
+    const forecastValues = future.map((h) => h.temp_c);
+
+    const mae =
+      modelValues.reduce((acc, v, i) => acc + Math.abs(v - forecastValues[i]), 0) /
+      modelValues.length;
+
+    const all = [...observed, ...modelValues, ...forecastValues];
+    const min = Math.min(...all);
+    const max = Math.max(...all);
+    const span = Math.max(max - min, 1);
+
+    const totalPoints = observed.length + future.length;
+    const stepX = (W - PAD_X * 2) / (totalPoints - 1);
+    const plotH = H - PAD_TOP - PAD_BOTTOM;
+
+    const x = (i: number) => PAD_X + i * stepX;
+    const y = (v: number) => PAD_TOP + plotH - ((v - min) / span) * plotH;
+
+    const toPath = (values: number[], startIndex: number) =>
+      values.map((v, i) => `${i === 0 ? 'M' : 'L'} ${x(startIndex + i)} ${y(v)}`).join(' ');
+
+    const lastObservedIndex = observed.length - 1;
+
+    return {
+      past,
+      future,
+      observed,
+      modelValues,
+      forecastValues,
+      fit,
+      mae,
+      slope,
+      x,
+      y,
+      totalPoints,
+      splitX: x(lastObservedIndex),
+      observedPath: toPath(observed, 0),
+      // Ambas ramas arrancan en el último punto observado para que las líneas
+      // salgan del mismo sitio en vez de flotar sueltas.
+      modelPath: toPath([observed[lastObservedIndex], ...modelValues], lastObservedIndex),
+      forecastPath: toPath([observed[lastObservedIndex], ...forecastValues], lastObservedIndex),
+    };
+  }, [hourly, nowEpoch]);
+
+  if (!chart) return null;
+
+  const fmt = (c: number) => `${Math.round(toUnit(c, unit))}°`;
+  const trend =
+    chart.slope > 0.15 ? 'al alza' : chart.slope < -0.15 ? 'a la baja' : 'estable';
+
+  const hovered =
+    hoverIndex === null
+      ? null
+      : hoverIndex < chart.observed.length
+        ? {
+            epoch: chart.past[hoverIndex].time_epoch,
+            observed: chart.observed[hoverIndex],
+            model: null as number | null,
+            forecast: null as number | null,
+          }
+        : {
+            epoch: chart.future[hoverIndex - chart.observed.length].time_epoch,
+            observed: null as number | null,
+            model: chart.modelValues[hoverIndex - chart.observed.length],
+            forecast: chart.forecastValues[hoverIndex - chart.observed.length],
+          };
+
+  const handleMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = (e.clientX - rect.left) / rect.width;
+    const index = Math.round(
+      ((ratio * W - PAD_X) / (W - PAD_X * 2)) * (chart.totalPoints - 1)
+    );
+    setHoverIndex(Math.min(Math.max(index, 0), chart.totalPoints - 1));
   };
-}, [hourly]);
-
-  if (predicted.length === 0) return null;
-
-  const convert = (c: number) => (unit === 'F' ? Math.round((c * 9) / 5 + 32) : Math.round(c));
-  const historyLen = Math.min(hourly.length, HISTORY_WINDOW);
-  const splitX = ((historyLen - 1) / (historyLen + PREDICT_HOURS - 1)) * 240;
-
-  const TrendIcon = trendDirection === 'up' ? FiTrendingUp : trendDirection === 'down' ? FiTrendingDown : FiMinus;
-  const trendColor = trendDirection === 'up' ? 'text-red-300' : trendDirection === 'down' ? 'text-blue-300' : 'text-white/70';
-  const trendLabel = trendDirection === 'up' ? 'Subiendo' : trendDirection === 'down' ? 'Bajando' : 'Estable';
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
+    <motion.section
+      initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      className="rounded-2xl p-4 bg-gradient-to-br from-white/5 via-white/10 to-white/5 border border-white/20"
+      transition={{ duration: 0.4, delay: 0.25 }}
+      className="rounded-2xl border border-white/12 bg-white/[0.06] p-5 backdrop-blur-md"
+      aria-label="Modelo lineal frente al pronóstico"
     >
-      <div className="flex items-center justify-between mb-3">
-  <h3 className="text-sm font-medium opacity-90">Tendencia (próximas {PREDICT_HOURS}h)</h3>
-  <span className={`flex items-center gap-1 text-sm font-medium ${trendColor}`}>
-    <TrendIcon size={16} /> {trendLabel}
-  </span>
-</div>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-medium uppercase tracking-wider text-white/60">
+          Modelo lineal vs. pronóstico
+        </h2>
+        <p className="text-xs text-white/60">
+          Tendencia observada {trend} · R² {chart.fit.toFixed(2)}
+        </p>
+      </div>
 
-<p className="text-xs opacity-70 mb-2">
-  Ahora: {convert(lastActual)}°{unit} → En {PREDICT_HOURS}h: {convert(lastPredicted)}°{unit}
-</p>
-
-      <svg viewBox="0 0 240 60" className="w-full h-16" preserveAspectRatio="none">
-        {/* Línea divisoria entre histórico y predicción */}
-        <line x1={splitX} y1="0" x2={splitX} y2="60" stroke="rgba(255,255,255,0.15)" strokeDasharray="3,3" />
-        <polyline
-          points={sparklinePoints}
-          fill="none"
-          stroke="rgba(255,255,255,0.8)"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-
-      <p className="text-xs opacity-60 mt-2">
-        Estimación basada en regresión lineal sobre las últimas {historyLen}h · dato ilustrativo, no oficial
+      <p className="mt-1 text-sm text-white/80">
+        Extrapolar la recta de las últimas {chart.observed.length} h se desvía{' '}
+        <strong className="font-semibold">
+          {deltaToUnit(chart.mae, unit).toFixed(1)}°
+        </strong>{' '}
+        de media respecto al pronóstico de las próximas {HORIZON_HOURS} h.
       </p>
-    </motion.div>
+
+      {/* Leyenda: con dos series la identidad nunca depende solo del color. */}
+      <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/70">
+        <LegendItem color={SERIES.observed} label="Observado" />
+        <LegendItem color={SERIES.model} label="Modelo lineal" dashed />
+        <LegendItem color={SERIES.forecast} label="Pronóstico" />
+      </ul>
+
+      <div className="mt-3 rounded-xl bg-[#0b0f18]/55 p-1">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          className="w-full"
+          role="img"
+          aria-label={`Temperatura observada las últimas ${chart.observed.length} horas y dos proyecciones para las próximas ${HORIZON_HOURS} horas: modelo lineal y pronóstico oficial. Desviación media ${Math.round(chart.mae)} grados.`}
+          onMouseMove={handleMove}
+          onMouseLeave={() => setHoverIndex(null)}
+        >
+          {/* Eje base y separador presente/futuro */}
+          <line
+            x1={PAD_X}
+            y1={H - PAD_BOTTOM}
+            x2={W - PAD_X}
+            y2={H - PAD_BOTTOM}
+            stroke="rgba(255,255,255,0.15)"
+            strokeWidth="1"
+          />
+          <line
+            x1={chart.splitX}
+            y1={PAD_TOP - 6}
+            x2={chart.splitX}
+            y2={H - PAD_BOTTOM}
+            stroke="rgba(255,255,255,0.28)"
+            strokeWidth="1"
+            strokeDasharray="3 3"
+          />
+          <text
+            x={chart.splitX + 4}
+            y={PAD_TOP - 1}
+            className="fill-white/55"
+            fontSize="8"
+          >
+            ahora
+          </text>
+
+          <path d={chart.observedPath} fill="none" stroke={SERIES.observed} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          <path d={chart.forecastPath} fill="none" stroke={SERIES.forecast} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          <path d={chart.modelPath} fill="none" stroke={SERIES.model} strokeWidth="2" strokeDasharray="5 4" strokeLinecap="round" strokeLinejoin="round" />
+
+          {/* Etiquetas directas en el extremo de cada rama */}
+          <EndLabel
+            x={chart.x(chart.totalPoints - 1)}
+            y={chart.y(chart.forecastValues[chart.forecastValues.length - 1])}
+            color={SERIES.forecast}
+            text={fmt(chart.forecastValues[chart.forecastValues.length - 1])}
+          />
+          <EndLabel
+            x={chart.x(chart.totalPoints - 1)}
+            y={chart.y(chart.modelValues[chart.modelValues.length - 1])}
+            color={SERIES.model}
+            text={fmt(chart.modelValues[chart.modelValues.length - 1])}
+          />
+
+          {hoverIndex !== null && (
+            <line
+              x1={chart.x(hoverIndex)}
+              y1={PAD_TOP - 6}
+              x2={chart.x(hoverIndex)}
+              y2={H - PAD_BOTTOM}
+              stroke="rgba(255,255,255,0.45)"
+              strokeWidth="1"
+            />
+          )}
+        </svg>
+      </div>
+
+      {/* Tooltip fuera del SVG: así no se recorta ni hereda el escalado del viewBox */}
+      <p className="mt-2 h-5 text-xs tabular-nums text-white/75">
+        {hovered && (
+          <>
+            <span className="font-medium">{formatHour(hovered.epoch, timeZone)}</span>
+            {hovered.observed !== null && <> · observado {fmt(hovered.observed)}</>}
+            {hovered.model !== null && <> · modelo {fmt(hovered.model)}</>}
+            {hovered.forecast !== null && <> · pronóstico {fmt(hovered.forecast)}</>}
+          </>
+        )}
+      </p>
+
+      <details className="mt-1 text-xs text-white/60">
+        <summary className="cursor-pointer select-none hover:text-white/85">
+          Ver los datos en tabla
+        </summary>
+        <table className="mt-2 w-full text-left tabular-nums">
+          <thead className="text-white/50">
+            <tr>
+              <th scope="col" className="py-1 font-normal">Hora</th>
+              <th scope="col" className="py-1 font-normal">Modelo</th>
+              <th scope="col" className="py-1 font-normal">Pronóstico</th>
+            </tr>
+          </thead>
+          <tbody>
+            {chart.future.map((h, i) => (
+              <tr key={h.time_epoch} className="border-t border-white/10">
+                <th scope="row" className="py-1 font-normal">{formatHour(h.time_epoch, timeZone)}</th>
+                <td className="py-1">{fmt(chart.modelValues[i])}</td>
+                <td className="py-1">{fmt(chart.forecastValues[i])}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+
+      <p className="mt-2 text-xs text-white/50">
+        Ejercicio ilustrativo: una recta sobre 12 puntos no es un modelo
+        meteorológico. Para decidir si sacar paraguas, mira el pronóstico.
+      </p>
+    </motion.section>
   );
-};
+});
+
+function LegendItem({ color, label, dashed }: { color: string; label: string; dashed?: boolean }) {
+  return (
+    <li className="flex items-center gap-1.5">
+      <span
+        aria-hidden="true"
+        className="inline-block h-0.5 w-4 rounded-full"
+        style={
+          dashed
+            ? { backgroundImage: `repeating-linear-gradient(to right, ${color} 0 5px, transparent 5px 9px)` }
+            : { backgroundColor: color }
+        }
+      />
+      {label}
+    </li>
+  );
+}
+
+function EndLabel({ x, y, color, text }: { x: number; y: number; color: string; text: string }) {
+  return (
+    <>
+      <circle cx={x} cy={y} r="4" fill={color} stroke="#0b0f18" strokeWidth="2" />
+      <text x={x - 6} y={y - 7} textAnchor="end" fontSize="9" className="fill-white">
+        {text}
+      </text>
+    </>
+  );
+}
 
 export default TemperatureTrend;
